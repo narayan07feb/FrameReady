@@ -1,0 +1,6 @@
+{
+  "name": "PostFrameStartup",
+  "description": "A high-performance Android startup library that defers non-critical initializers to after the first frame is drawn.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
