@@ -20,6 +20,10 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.foundation.clickable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -96,6 +100,9 @@ fun MainScreen(viewModel: MainViewModel, modifier: Modifier = Modifier) {
             state = state,
             onLateAwaitClick = { viewModel.testLateAwait() }
         )
+
+        // Card 3.5: DI Integration Showcase (Koin & Hilt Blueprint)
+        DependencyInjectionShowcaseSection()
 
         // Card 4: Dev Actions & Reset Options
         DeveloperOptionsSection(
@@ -204,7 +211,7 @@ fun MetricsBoardCard(state: com.example.demo.UiState) {
                 }
             }
 
-            Divider(color = Color(0xFF23233B))
+            HorizontalDivider(color = Color(0xFF23233B))
 
             // Performance columns Row
             Row(
@@ -243,7 +250,7 @@ fun MetricsBoardCard(state: com.example.demo.UiState) {
                 )
             }
 
-            Divider(color = Color(0xFF23233B))
+            HorizontalDivider(color = Color(0xFF23233B))
 
             // Percentiles Section
             Text(
@@ -343,7 +350,7 @@ fun DependencyGraphSection() {
                 fontWeight = FontWeight.SemiBold
             )
             
-            Divider(color = Color(0xFF23233B))
+            HorizontalDivider(color = Color(0xFF23233B))
 
             // Step 1 node CARD
             NodeBox(
@@ -460,7 +467,7 @@ fun AwaitDemonstrationSection(state: com.example.demo.UiState, onLateAwaitClick:
                 fontWeight = FontWeight.SemiBold
             )
             
-            Divider(color = Color(0xFF23233B))
+            HorizontalDivider(color = Color(0xFF23233B))
 
             // Early Awaiter Status Box
             Column {
@@ -632,7 +639,7 @@ fun BenchmarkArenaSection(
                 )
             }
 
-            Divider(color = Color(0xFF23233B))
+            HorizontalDivider(color = Color(0xFF23233B))
 
             // Simulation Trigger and Active Progress display
             if (state.isSimulating) {
@@ -729,7 +736,7 @@ fun BenchmarkArenaSection(
                 )
             }
 
-            Divider(color = Color(0xFF23233B))
+            HorizontalDivider(color = Color(0xFF23233B))
 
             // Explanatory code reference text
             Text(
@@ -828,6 +835,222 @@ fun ContenderBox(
                     fontWeight = FontWeight.Bold
                 )
             }
+        }
+    }
+}
+
+@Composable
+fun DependencyInjectionShowcaseSection() {
+    var selectedTab by remember { mutableStateOf("Koin") }
+
+    Card(
+        colors = CardDefaults.cardColors(containerColor = Color(0xFF111122)),
+        shape = RoundedCornerShape(16.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(1.dp, Color(0xFF23233B), RoundedCornerShape(16.dp))
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column {
+                    Text(
+                        text = "DI Integration: Koin & Hilt Blueprint",
+                        color = Color.White,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "Awaiting asynchronous dependencies safely",
+                        color = Color(0xFF9E9EB8),
+                        fontSize = 11.sp
+                    )
+                }
+
+                Icon(
+                    imageVector = Icons.Default.Build,
+                    contentDescription = null,
+                    tint = Color(0xFFC084FC),
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+
+            HorizontalDivider(color = Color(0xFF23233B))
+
+            // Tab selectors
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(Color(0xFF0C0C14), RoundedCornerShape(8.dp))
+                    .padding(4.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                listOf("Koin", "Hilt").forEach { tab ->
+                    val isSelected = selectedTab == tab
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(if (isSelected) Color(0xFF1F1F35) else Color.Transparent)
+                            .border(1.dp, if (isSelected) Color(0xFF312E81) else Color.Transparent, RoundedCornerShape(6.dp))
+                            .clickable { selectedTab = tab }
+                            .padding(vertical = 8.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = if (tab == "Koin") "Koin Setup Guide" else "Hilt Async Setup",
+                            color = if (isSelected) Color.White else Color(0xFF9E9EB8),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+
+            // Display content based on selection
+            if (selectedTab == "Koin") {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        text = "🚀 Dynamic Post-First-Frame Bootstrap",
+                        color = Color(0xFF818CF8),
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "Koin supports dynamic start. Instead of launching Koin in your Application.onCreate() on the busy UI thread, launch it asynchronously inside a FrameReadyInitializer.",
+                        color = Color(0xFF9E9EB8),
+                        fontSize = 11.sp,
+                        lineHeight = 15.sp
+                    )
+
+                    // Step card
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color(0xFF161626))
+                            .border(1.dp, Color(0xFF23233B), RoundedCornerShape(8.dp))
+                            .padding(12.dp)
+                    ) {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text(
+                                text = "Code Implementation Blueprint",
+                                color = Color.White,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            
+                            // Mock Code Preview
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(Color(0xFF0C0C14), RoundedCornerShape(4.dp))
+                                    .padding(8.dp)
+                            ) {
+                                Text(
+                                    text = "class KoinFrameReadyInitializer : FrameReadyInitializer<Boolean> {\n" +
+                                            "    override suspend fun create(context: Context): Boolean {\n" +
+                                            "        startKoin {\n" +
+                                            "            androidContext(context)\n" +
+                                            "            modules(appModule)\n" +
+                                            "        }\n" +
+                                            "        return true\n" +
+                                            "    }\n" +
+                                            "}",
+                                    color = Color(0xFFA5B4FC),
+                                    fontSize = 10.sp,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                            }
+                        }
+                    }
+
+                    Text(
+                        text = "💡 Call 'FrameReady.await(KoinFrameReadyInitializer::class.java)' inside any ViewModel's init block to suspend safe execution until Koin modules finish registering.",
+                        color = Color(0xFF2DD4BF),
+                        fontSize = 11.sp,
+                        lineHeight = 15.sp
+                    )
+                }
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        text = "🛠️ Asynchronous Singleton Injections",
+                        color = Color(0xFFF472B6),
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "Hilt resolves compile-time references instantly, but heavyweight setups (such as SQLite indices or remote configuration retrievals) must not block launcher threads. Combine Hilt with FrameReady by injecting lightweight holders first, then initializing them in the background.",
+                        color = Color(0xFF9E9EB8),
+                        fontSize = 11.sp,
+                        lineHeight = 15.sp
+                    )
+
+                    // Step card
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color(0xFF161626))
+                            .border(1.dp, Color(0xFF23233B), RoundedCornerShape(8.dp))
+                            .padding(12.dp)
+                    ) {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text(
+                                text = "Code Implementation Blueprint",
+                                color = Color.White,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            
+                            // Mock Code Preview
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(Color(0xFF0C0C14), RoundedCornerShape(4.dp))
+                                    .padding(8.dp)
+                            ) {
+                                Text(
+                                    text = "class DbFrameReadyInitializer : FrameReadyInitializer<Any> {\n" +
+                                            "    override suspend fun create(context: Context): Any {\n" +
+                                            "        // Heavy DB setup on Background Worker context\n" +
+                                            "        val db = Room.databaseBuilder(...).build()\n" +
+                                            "        dbHolder.setConnection(db)\n" +
+                                            "        return db\n" +
+                                            "    }\n" +
+                                            "}",
+                                    color = Color(0xFFFBCFE8),
+                                    fontSize = 10.sp,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                            }
+                        }
+                    }
+
+                    Text(
+                        text = "💡 Safely obtain the connection inside consumer classes using: 'FrameReady.await(DbFrameReadyInitializer::class.java)' inside a coroutine. This blocks zero threads!",
+                        color = Color(0xFFF59E0B),
+                        fontSize = 11.sp,
+                        lineHeight = 15.sp
+                    )
+                }
+            }
+
+            HorizontalDivider(color = Color(0xFF23233B))
+
+            Text(
+                text = "🔎 See full, highly detailed architectural blueprints with code comments under 'com.example.demo.DependencyInjectionIntegration.kt' in the project files.",
+                color = Color(0xFF94A3B8),
+                fontSize = 10.sp,
+                lineHeight = 14.sp
+            )
         }
     }
 }
