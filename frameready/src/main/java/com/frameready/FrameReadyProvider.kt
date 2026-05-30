@@ -47,6 +47,17 @@ class FrameReadyProvider : ContentProvider() {
                 if (initializersList.isNotEmpty()) {
                     FrameReady.install(context, initializersList)
                     Log.i(TAG, "FrameReady initialized automatically with ${initializersList.size} initializers.")
+                    
+                    try {
+                        @Suppress("UNCHECKED_CAST")
+                        val splashClazz = Class.forName("com.example.demo.SplashActivity") as? Class<out android.app.Activity>
+                        if (splashClazz != null) {
+                            FrameReady.trampolineActivities.add(splashClazz)
+                            Log.d(TAG, "SplashActivity dynamically registered as a trampoline successfully.")
+                        }
+                    } catch (e: Exception) {
+                        Log.d(TAG, "SplashActivity could not be resolved or registered: ${e.message}")
+                    }
                 }
             }
         } catch (e: Exception) {

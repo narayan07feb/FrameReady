@@ -108,7 +108,6 @@ fun MainScreen(viewModel: MainViewModel, modifier: Modifier = Modifier) {
         DeveloperOptionsSection(
             context = context,
             onResetStableCount = {
-                FrameReady.resetAllForTesting()
                 val sharedPrefs = context.getSharedPreferences("frame_ready_preferences", Context.MODE_PRIVATE)
                 sharedPrefs.edit().clear().apply()
                 // Fake process recreate message
@@ -236,7 +235,7 @@ fun MetricsBoardCard(state: com.example.demo.UiState) {
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 val rate = state.startupMetrics?.netImprovementRate ?: 59.5
-                val rateText = String.format("%.1f%%", rate)
+                val rateText = String.format(java.util.Locale.US, "%.1f%%", rate)
                 MetricKPI(
                     label = "Cold Start Improvement",
                     value = if (state.startupMetrics != null) rateText else "+59.5% faster",

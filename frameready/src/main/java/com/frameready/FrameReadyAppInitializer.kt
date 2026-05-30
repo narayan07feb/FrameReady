@@ -7,6 +7,7 @@ import androidx.startup.Initializer
  * An App Startup [Initializer] that acts as a bridge, letting androidx.startup
  * transition handoffs to FrameReady seamlessly at application start.
  */
+@Suppress("EnsureInitializerMetadata")
 class FrameReadyAppInitializer : Initializer<Unit> {
 
     override fun create(context: Context) {

@@ -229,11 +229,16 @@ object FrameReady {
         // Recursively extract all elements to include transitively declared dependency classes
         fun scan(clazz: Class<out FrameReadyInitializer<*>>) {
             if (allNodes.add(clazz)) {
-                val instance = clazz.getDeclaredConstructor().newInstance()
-                val deps = instance.dependencies()
-                for (dep in deps) {
-                    @Suppress("UNCHECKED_CAST")
-                    scan(dep as Class<out FrameReadyInitializer<*>>)
+                try {
+                    val instance = clazz.getDeclaredConstructor().newInstance()
+                    val deps = instance.dependencies()
+                    for (dep in deps) {
+                        @Suppress("UNCHECKED_CAST")
+                        scan(dep as Class<out FrameReadyInitializer<*>>)
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed scanning dependencies for: ${clazz.name}", e)
+                    // If instantiation fails during scan, we still allow other nodes to be processed
                 }
             }
         }
@@ -248,12 +253,16 @@ object FrameReady {
 
         // Build edges: dependency -> element (dependency runs first)
         allNodes.forEach { node ->
-            val instance = node.getDeclaredConstructor().newInstance()
-            instance.dependencies().forEach { dep ->
-                @Suppress("UNCHECKED_CAST")
-                val depClass = dep as Class<out FrameReadyInitializer<*>>
-                adjacencyList[depClass]?.add(node)
-                inDegree[node] = (inDegree[node] ?: 0) + 1
+            try {
+                val instance = node.getDeclaredConstructor().newInstance()
+                instance.dependencies().forEach { dep ->
+                    @Suppress("UNCHECKED_CAST")
+                    val depClass = dep as Class<out FrameReadyInitializer<*>>
+                    adjacencyList[depClass]?.add(node)
+                    inDegree[node] = (inDegree[node] ?: 0) + 1
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed creating dependency edges for: ${node.name}", e)
             }
         }
 
@@ -320,7 +329,7 @@ object FrameReady {
                             triggerChoreographer(activity.applicationContext)
                         } else {
                             if (Log.isLoggable(TAG, Log.DEBUG)) {
-                                Log.w(TAG, "Trampoline detected: ${activity.localClassName}, skipping frame trigger.")
+                                Log.d(TAG, "Trampoline detected: ${activity.localClassName}, skipping frame trigger.")
                             }
                             trampolineSkipCount.incrementAndGet()
                         }
@@ -434,6 +443,7 @@ object FrameReady {
 
         val trackerStart = SystemClock.elapsedRealtime()
         val firstStartTracked = AtomicBoolean(false)
+        val initStartMsRef = java.util.concurrent.atomic.AtomicLong(0L)
 
         // Guarantee globalAppContext is non-null for metrics & SharedPreferences Access
         if (globalAppContext == null) {
@@ -458,8 +468,7 @@ object FrameReady {
                         if (firstStartTracked.compareAndSet(false, true)) {
                             // first frame -> first initializer started
                             val offsetMs = SystemClock.elapsedRealtime() - firstFrameTime
-                            @Suppress("VisibleForTests")
-                            setInitStartOffset(metrics, offsetMs)
+                            initStartMsRef.set(offsetMs)
                         }
 
                         val dispatcher = when (instance.executionThread()) {
@@ -490,16 +499,8 @@ object FrameReady {
                                 )
                             }
                         } else {
-                            if (instance.executionThread() == ExecutionThread.BACKGROUND) {
-                                kotlinx.coroutines.runInterruptible(dispatcher) {
-                                    kotlinx.coroutines.runBlocking {
-                                        instance.create(context)
-                                    }
-                                }
-                            } else {
-                                kotlinx.coroutines.withContext(dispatcher) {
-                                    instance.create(context)
-                                }
+                            kotlinx.coroutines.withContext(dispatcher) {
+                                instance.create(context)
                             }
                         }
                         deferred.complete(result as Any)
@@ -520,13 +521,11 @@ object FrameReady {
             val initCompleteMs = endTracker - firstFrameTime
             
             // Generate stable statistics across launches
-            handleStartupSuccess(context, metrics.copy(initCompleteMs = initCompleteMs))
+            handleStartupSuccess(context, metrics.copy(
+                initStartMs = initStartMsRef.get(),
+                initCompleteMs = initCompleteMs
+            ))
         }
-    }
-
-    @VisibleForTesting
-    internal fun setInitStartOffset(metrics: StartupMetrics, offset: Long) {
-        // Safe reflect or copy updates for test cases wanting explicit values
     }
 
     private fun handleStartupSuccess(context: Context, partialMetrics: StartupMetrics) {
@@ -570,7 +569,9 @@ object FrameReady {
 
         // Only report to listener if N stable launches is satisfied
         if (currentStableCount >= stableThreshold) {
-            metricsListener?.invoke(completedMetrics)
+            handler.post {
+                metricsListener?.invoke(completedMetrics)
+            }
         }
     }
 

@@ -50,15 +50,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _uiState.update { it.copy(earlyAwaitStatus = "Waiting for A (Suspended)...") }
             val startTime = SystemClock.elapsedRealtime()
             
-            // This will suspend until A completes
-            val aResult = FrameReady.await(AInitializer::class.java)
-            
-            val duration = SystemClock.elapsedRealtime() - startTime
-            _uiState.update { 
-                it.copy(
-                    earlyAwaitStatus = "Resumed! Result: \"$aResult\"",
-                    earlyAwaitTimeMs = duration
-                )
+            try {
+                // This will suspend until A completes
+                val aResult = FrameReady.await(AInitializer::class.java)
+                val duration = SystemClock.elapsedRealtime() - startTime
+                _uiState.update { 
+                    it.copy(
+                        earlyAwaitStatus = "Resumed! Result: \"$aResult\"",
+                        earlyAwaitTimeMs = duration
+                    )
+                }
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(
+                        earlyAwaitStatus = "Failed: ${e.localizedMessage}",
+                        earlyAwaitTimeMs = 0
+                    )
+                }
             }
         }
     }
@@ -71,15 +79,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _uiState.update { it.copy(lateAwaitStatus = "Querying C...") }
             val startTime = SystemClock.elapsedRealtime()
             
-            // This will return immediately because C is already done
-            val cResult = FrameReady.await(CInitializer::class.java)
-            
-            val duration = SystemClock.elapsedRealtime() - startTime
-            _uiState.update {
-                it.copy(
-                    lateAwaitStatus = "Completed Instantly! Result: \"$cResult\"",
-                    lateAwaitTimeMs = duration
-                )
+            try {
+                // This will return immediately because C is already done
+                val cResult = FrameReady.await(CInitializer::class.java)
+                val duration = SystemClock.elapsedRealtime() - startTime
+                _uiState.update {
+                    it.copy(
+                        lateAwaitStatus = "Completed Instantly! Result: \"$cResult\"",
+                        lateAwaitTimeMs = duration
+                    )
+                }
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(
+                        lateAwaitStatus = "Query failed: ${e.localizedMessage}",
+                        lateAwaitTimeMs = 0
+                    )
+                }
             }
         }
     }

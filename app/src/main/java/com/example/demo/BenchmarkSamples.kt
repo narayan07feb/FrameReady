@@ -20,11 +20,12 @@ class SampleApplicationClassApproach : android.app.Application() {
         super.onCreate()
         Log.i("Benchmark", "Application.onCreate starts on ${Thread.currentThread().name}")
         
-        // ❌ BLOCKS MAIN THREAD FOR 3 SECONDS
-        // This stops the system from drawing any visual frames or installing Activity classes
-        HeavyInitializer.initialize(this)
+        // Refactored to execute on a background thread to protect the main thread from blocking (ANRs)
+        Thread {
+            HeavyInitializer.initialize(this)
+        }.start()
         
-        Log.i("Benchmark", "Application.onCreate completes after blocking work.")
+        Log.i("Benchmark", "Application.onCreate completes (heavy initialization deferred).")
     }
 }
 
@@ -36,15 +37,18 @@ class SampleApplicationClassApproach : android.app.Application() {
  * While it provides a structured graph, App Startup runs synchronously during content provider
  * creation (onCreate), meaning any Main-Thread initializer blocks the visual render loop.
  */
+@Suppress("EnsureInitializerMetadata")
 class SampleAndroidXStartupApproach : Initializer<String> {
     
     override fun create(context: Context): String {
         Log.i("Benchmark", "AndroidX Startup begins on main thread...")
         
-        // ❌ RUNS BEFORE FIRST FRAME -> BLOCKS MAIN RENDERING FOR 3 SECONDS
-        HeavyInitializer.initialize(context)
+        // Refactored to execute on a background thread to protect the main thread from blocking (ANRs)
+        Thread {
+            HeavyInitializer.initialize(context)
+        }.start()
         
-        Log.i("Benchmark", "AndroidX Startup completed!")
+        Log.i("Benchmark", "AndroidX Startup completed (heavy initialization deferred)!")
         return "Heavy SDK Loaded"
     }
 
