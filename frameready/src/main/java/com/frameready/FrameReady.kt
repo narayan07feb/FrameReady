@@ -51,7 +51,6 @@ object FrameReady {
     private const val KEY_STABLE_COUNT = "consecutive_stable_launches"
     private const val KEY_TTFF_HISTORY = "ttff_historical_times"
     private const val DEFAULT_STABLE_THRESHOLD = 100
-    private const val TRAMPOLINE_THRESHOLD_MS = 500L
 
     private val libraryScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val handler = Handler(Looper.getMainLooper())
@@ -73,6 +72,10 @@ object FrameReady {
     // Configurable thresholds for testing/open-source adoption
     var baselineTtffMs: Long = 350L
     var stableThreshold: Int = DEFAULT_STABLE_THRESHOLD
+
+    // Dynamic/Configurable Trampoline overrides
+    var trampolineThresholdMs: Long = 500L
+    val trampolineActivities = ConcurrentHashMap.newKeySet<Class<out Activity>>()
 
     // Trampoline activity tracking
     private val activityMap = ConcurrentHashMap<Activity, ActivityEntry>()
@@ -101,34 +104,41 @@ object FrameReady {
     }
 
     /**
-     * Manual configuration entry point.
+     * Thread-safe cumulative manual/auto configuration entry point.
      */
     fun install(context: Context, initClasses: List<Class<out FrameReadyInitializer<*>>>) {
-        if (!isInstalled.compareAndSet(false, true)) {
-            Log.w(TAG, "Already installed. Skipping redundant initialization.")
+        if (hasTriggered.get()) {
+            Log.w(TAG, "Already triggered first frame. Rejecting cumulative initializer registration.")
             return
         }
 
         val appContext = context.applicationContext as Application
         globalAppContext = appContext
-        initializers.addAll(initClasses)
 
-        // Compile graph and detect cycles
-        try {
-            sortedInitializers = sort(initializers.toList())
-        } catch (e: Exception) {
-            // Reset state if graph sorting fails to prevent deadlock/leak
-            isInstalled.set(false)
-            throw e
+        synchronized(this) {
+            if (initClasses.isNotEmpty()) {
+                initializers.addAll(initClasses)
+            }
+
+            try {
+                sortedInitializers = sort(initializers.toList())
+                sortedInitializers?.forEach { clazz ->
+                    getDeferred<Any>(clazz)
+                }
+            } catch (e: Exception) {
+                if (!isInstalled.get()) {
+                    isInstalled.set(false)
+                }
+                throw e
+            }
+
+            if (isInstalled.compareAndSet(false, true)) {
+                // Register Activity Lifecycle callbacks to detect first frame & trampolines
+                registerLifecycleCallbacks(appContext)
+            } else {
+                Log.i(TAG, "Incrementally registered additional initializers. Total is now: ${initializers.size}")
+            }
         }
-
-        // Initialize Deferred wrappers for all sorted elements
-        sortedInitializers?.forEach { clazz ->
-            getDeferred<Any>(clazz)
-        }
-
-        // Register Activity Lifecycle callbacks to detect first frame & trampolines
-        registerLifecycleCallbacks(appContext)
     }
 
     /**
@@ -162,11 +172,17 @@ object FrameReady {
     }
 
     /**
-     * Thread-safe blocking getter. Logs a warning or throws on Android's main thread.
+     * Thread-safe blocking getter. Throws an explicit IllegalStateException when called on
+     * Android's main thread before completion to protect developers from black-screen deadlocks.
      */
     fun <T> get(clazz: Class<out FrameReadyInitializer<T>>): T {
-        if (Looper.myLooper() == Looper.getMainLooper()) {
-            Log.w(TAG, "Rule 4 violation! Blocking 'get()' called on Main thread for ${clazz.simpleName}. Utilize suspending 'await()' instead.")
+        val deferred = resultMap[clazz] ?: throw IllegalStateException("Initializer ${clazz.simpleName} was never installed.")
+        if (!deferred.isCompleted && Looper.myLooper() == Looper.getMainLooper()) {
+            throw IllegalStateException(
+                "Rule 4 Violation & Deadlock Risk! Blocking 'get()' called on the Main thread before " +
+                "${clazz.simpleName} completed initialization. Use suspending 'await()' in a coroutine, " +
+                "or run this query on a background thread."
+            )
         }
         return runBlocking { await(clazz) }
     }
@@ -285,10 +301,16 @@ object FrameReady {
                 entry.resumedAt = SystemClock.elapsedRealtime()
 
                 val isNotificationStart = Build.VERSION.SDK_INT >= 31 && isNotificationOriginated(activity)
+                val isExplicitTrampoline = trampolineActivities.contains(activity::class.java)
 
                 if (isNotificationStart) {
                     // API 31+ Notification routing: skip delay overhead, schedule immediate Choreographer frame
                     triggerChoreographer(activity.applicationContext)
+                } else if (isExplicitTrampoline) {
+                    if (Log.isLoggable(TAG, Log.DEBUG)) {
+                        Log.d(TAG, "Explicit trampoline registered: ${activity.localClassName}, skipping frame trigger.")
+                    }
+                    trampolineSkipCount.incrementAndGet()
                 } else {
                     // Standard trampoline & splash flow
                     handler.postDelayed({
@@ -302,7 +324,7 @@ object FrameReady {
                             }
                             trampolineSkipCount.incrementAndGet()
                         }
-                    }, TRAMPOLINE_THRESHOLD_MS)
+                    }, trampolineThresholdMs)
                 }
             }
 
@@ -357,9 +379,13 @@ object FrameReady {
                 }
             } else {
                 try {
+                    // Double-Buffered Deferral: wait for 2 full Choreographer frames
+                    // to ensure the first frame is completely drawn and rendered.
                     Choreographer.getInstance().postFrameCallback {
-                        val firstFrameTime = SystemClock.elapsedRealtime()
-                        runAll(context, firstFrameTime)
+                        Choreographer.getInstance().postFrameCallback {
+                            val firstFrameTime = SystemClock.elapsedRealtime()
+                            runAll(context, firstFrameTime)
+                        }
                     }
                 } catch (e: Exception) {
                     // Fallback inside headless/test environments where Choreographer may crash
@@ -385,6 +411,7 @@ object FrameReady {
         val app = context.applicationContext as? Application
         lifecycleCallbacks?.let { app?.unregisterActivityLifecycleCallbacks(it) }
         lifecycleCallbacks = null
+        activityMap.clear() // Clear references completely to prevent context/activity memory leaks
     }
 
     private fun runAll(context: Context, firstFrameTime: Long) {
@@ -408,42 +435,80 @@ object FrameReady {
         val trackerStart = SystemClock.elapsedRealtime()
         val firstStartTracked = AtomicBoolean(false)
 
+        // Guarantee globalAppContext is non-null for metrics & SharedPreferences Access
+        if (globalAppContext == null) {
+            globalAppContext = context.applicationContext
+        }
+
         libraryScope.launch {
             val jobs = sorted.map { clazz ->
                 launch {
                     val deferred = getDeferred<Any>(clazz)
-                    
-                    // Instantiate to find declared dependent nodes
-                    val instance = clazz.getDeclaredConstructor().newInstance()
-                    
-                    // Suspend-wait on all declared dependencies
-                    instance.dependencies().forEach { dep ->
-                        val depDeferred = getDeferred<Any>(dep)
-                        depDeferred.await()
-                    }
-
-                    if (firstStartTracked.compareAndSet(false, true)) {
-                        // first frame -> first initializer started
-                        val offsetMs = SystemClock.elapsedRealtime() - firstFrameTime
-                        @Suppress("VisibleForTests")
-                        setInitStartOffset(metrics, offsetMs)
-                    }
-
-                    val dispatcher = when (instance.executionThread()) {
-                        ExecutionThread.MAIN -> Dispatchers.Main
-                        ExecutionThread.BACKGROUND -> Dispatchers.IO
-                    }
-
                     try {
-                        val result = withContext(dispatcher) {
-                            instance.create(context)
+                        // Instantiate to find declared dependent nodes
+                        val instance = clazz.getDeclaredConstructor().newInstance()
+                        
+                        // Suspend-wait on all declared dependencies. If a dependency completes exceptionally,
+                        // depDeferred.await() will throw, which is caught locally inside this try-catch.
+                        instance.dependencies().forEach { dep ->
+                            val depDeferred = getDeferred<Any>(dep)
+                            depDeferred.await()
+                        }
+
+                        if (firstStartTracked.compareAndSet(false, true)) {
+                            // first frame -> first initializer started
+                            val offsetMs = SystemClock.elapsedRealtime() - firstFrameTime
+                            @Suppress("VisibleForTests")
+                            setInitStartOffset(metrics, offsetMs)
+                        }
+
+                        val dispatcher = when (instance.executionThread()) {
+                            ExecutionThread.MAIN -> Dispatchers.Main
+                            ExecutionThread.BACKGROUND -> Dispatchers.IO
+                        }
+
+                        val timeout = instance.timeoutMs()
+                        val result = if (timeout > 0 && timeout < Long.MAX_VALUE) {
+                            try {
+                                kotlinx.coroutines.withTimeout(timeout) {
+                                    if (instance.executionThread() == ExecutionThread.BACKGROUND) {
+                                        kotlinx.coroutines.runInterruptible(dispatcher) {
+                                            kotlinx.coroutines.runBlocking {
+                                                instance.create(context)
+                                            }
+                                        }
+                                    } else {
+                                        kotlinx.coroutines.withContext(dispatcher) {
+                                            instance.create(context)
+                                        }
+                                    }
+                                }
+                            } catch (te: kotlinx.coroutines.TimeoutCancellationException) {
+                                throw InitializerTimeoutException(
+                                    "Initializer ${clazz.simpleName} timed out after ${timeout}ms. " +
+                                    "Ensure internal heavy operations are optimized or configured with higher timeouts."
+                                )
+                            }
+                        } else {
+                            if (instance.executionThread() == ExecutionThread.BACKGROUND) {
+                                kotlinx.coroutines.runInterruptible(dispatcher) {
+                                    kotlinx.coroutines.runBlocking {
+                                        instance.create(context)
+                                    }
+                                }
+                            } else {
+                                kotlinx.coroutines.withContext(dispatcher) {
+                                    instance.create(context)
+                                }
+                            }
                         }
                         deferred.complete(result as Any)
                     } catch (e: Throwable) {
                         Log.e(TAG, "Failed executing FrameReadyInitializer: ${clazz.name}", e)
                         deferred.completeExceptionally(e)
                         handleStartupFailure(e, clazz.name)
-                        // Terminate downstream execution gracefully via failure
+                        // Terminate downstream execution gracefully via local completion exception,
+                        // without throwing uncaught exceptions to cascade-cancel the entire launch tree.
                     }
                 }
             }

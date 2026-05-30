@@ -24,7 +24,7 @@ interface FrameReadyInitializer<T> {
     /**
      * Initializes the component and returns the initialized instance.
      */
-    fun create(context: Context): T
+    suspend fun create(context: Context): T
 
     /**
      * Declares the list of dependencies that must complete initialization before this initializer starts.
@@ -35,6 +35,12 @@ interface FrameReadyInitializer<T> {
      * Declares the execution thread (defaults to BACKGROUND).
      */
     fun executionThread(): ExecutionThread = ExecutionThread.BACKGROUND
+
+    /**
+     * Declares the execution timeout in milliseconds for this initializer.
+     * Default is Long.MAX_VALUE (no timeout).
+     */
+    fun timeoutMs(): Long = Long.MAX_VALUE
 }
 
 /**

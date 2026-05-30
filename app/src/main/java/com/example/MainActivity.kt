@@ -82,6 +82,12 @@ fun MainScreen(viewModel: MainViewModel, modifier: Modifier = Modifier) {
         // Card 1: Cold Start Performance Metrics Board
         MetricsBoardCard(state)
 
+        // Card 1.5: Interactive Benchmark Arena (Cold Start Battle)
+        BenchmarkArenaSection(
+            state = state,
+            onRunSimClick = { viewModel.runBenchmarkSimulation() }
+        )
+
         // Card 2: Chained Dependency Graph Visualization (A -> B -> C)
         DependencyGraphSection()
 
@@ -578,6 +584,249 @@ fun DeveloperOptionsSection(context: Context, onResetStableCount: () -> Unit) {
                 Icon(imageVector = Icons.Default.Refresh, contentDescription = "Reset Icon")
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(text = "Reset Launch History & Wipes Records", fontSize = 12.sp)
+            }
+        }
+    }
+}
+
+@Composable
+fun BenchmarkArenaSection(
+    state: com.example.demo.UiState,
+    onRunSimClick: () -> Unit
+) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = Color(0xFF111122)),
+        shape = RoundedCornerShape(16.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(1.dp, Color(0xFF23233B), RoundedCornerShape(16.dp))
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column {
+                    Text(
+                        text = "Benchmark Arena: Cold-Start Battle",
+                        color = Color.White,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "Analyzing heavy 3-second initialization impact on Cold Start",
+                        color = Color(0xFF9E9EB8),
+                        fontSize = 11.sp
+                    )
+                }
+
+                Icon(
+                    imageVector = Icons.Default.Info,
+                    contentDescription = null,
+                    tint = Color(0xFF818CF8),
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+
+            Divider(color = Color(0xFF23233B))
+
+            // Simulation Trigger and Active Progress display
+            if (state.isSimulating) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color(0xFF131326))
+                        .border(1.dp, Color(0xFF312E81), RoundedCornerShape(8.dp))
+                        .padding(12.dp)
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Evaluating Thread Scheduling...",
+                                color = Color(0xFF818CF8),
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(14.dp),
+                                strokeWidth = 2.dp,
+                                color = Color(0xFF818CF8)
+                            )
+                        }
+
+                        LinearProgressIndicator(
+                            progress = { state.simProgress },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(6.dp)
+                                .clip(RoundedCornerShape(3.dp)),
+                            color = Color(0xFF818CF8),
+                            trackColor = Color(0xFF1E1B4B)
+                        )
+
+                        Text(
+                            text = state.simCurrentStep,
+                            color = Color(0xFFCBD5E1),
+                            fontSize = 11.sp,
+                            lineHeight = 14.sp
+                        )
+                    }
+                }
+            } else {
+                Button(
+                    onClick = onRunSimClick,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF312E81))
+                ) {
+                    Icon(imageVector = Icons.Default.PlayArrow, contentDescription = null)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(text = "Trigger Cold-Start Battle Simulation", fontWeight = FontWeight.Bold)
+                }
+            }
+
+            // The Three Contenders Comparison Rows
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                // Approach 1 Block
+                ContenderBox(
+                    title = "1. Classical Application.onCreate()",
+                    subtitle = "Blocks Main thread synchronously before activity setup.",
+                    ttffText = if (state.simAppClassTtff > 0) "${state.simAppClassTtff} ms" else "Idle (Pending)",
+                    statusText = "🔴 Screen frozen black/white",
+                    barColor = Color(0xFFEF4444),
+                    relativeWidth = if (state.simAppClassTtff > 0) 1.0f else 0.05f,
+                    isActive = state.activeApproachIndex == 0
+                )
+
+                // Approach 2 Block
+                ContenderBox(
+                    title = "2. AndroidX App Startup Library",
+                    subtitle = "Runs synchronously inside ContentProviders blocking first draw.",
+                    ttffText = if (state.simAndroidXTtff > 0) "${state.simAndroidXTtff} ms" else "Idle (Pending)",
+                    statusText = "🔴 App frozen on splash/white",
+                    barColor = Color(0xFFF97316),
+                    relativeWidth = if (state.simAndroidXTtff > 0) 0.96f else 0.05f,
+                    isActive = state.activeApproachIndex == 1
+                )
+
+                // Approach 3 Block
+                ContenderBox(
+                    title = "3. FrameReady Post-First-Frame",
+                    subtitle = "Renders UI instantly first, processes heavy work on IO pool asynchronously.",
+                    ttffText = if (state.simFrameReadyTtff > 0) "${state.simFrameReadyTtff} ms" else "Idle (Pending)",
+                    statusText = "🟢 Immediate drawn & fluid",
+                    barColor = Color(0xFF10B981),
+                    relativeWidth = if (state.simFrameReadyTtff > 0) 0.06f else 0.05f,
+                    isActive = state.activeApproachIndex == 2
+                )
+            }
+
+            Divider(color = Color(0xFF23233B))
+
+            // Explanatory code reference text
+            Text(
+                text = "💡 Benchmark blueprints and classes are located at \"com.example.demo.BenchmarkSamples.kt\". Try resetting the device launch history block below to see actual cold-start metric collection in real time.",
+                color = Color(0xFF9E9EB8),
+                fontSize = 11.sp,
+                lineHeight = 15.sp
+            )
+        }
+    }
+}
+
+@Composable
+fun ContenderBox(
+    title: String,
+    subtitle: String,
+    ttffText: String,
+    statusText: String,
+    barColor: Color,
+    relativeWidth: Float,
+    isActive: Boolean
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .background(if (isActive) Color(0xFF1A1D2B) else Color(0xFF161622))
+            .border(
+                1.dp,
+                if (isActive) barColor else Color(0xFF23233B),
+                RoundedCornerShape(8.dp)
+            )
+            .padding(12.dp)
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = title,
+                    color = Color.White,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = statusText,
+                    color = barColor,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+
+            Text(
+                text = subtitle,
+                color = Color(0xFF94A3B8),
+                fontSize = 10.sp,
+                lineHeight = 13.sp
+            )
+
+            Spacer(modifier = Modifier.height(6.dp))
+
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    text = "TTFF Ratio:",
+                    color = Color(0xFF64748B),
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(8.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(Color(0xFF1F1F2E))
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxHeight()
+                            .fillMaxWidth(relativeWidth)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(barColor)
+                    )
+                }
+
+                Text(
+                    text = ttffText,
+                    color = Color.White,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold
+                )
             }
         }
     }

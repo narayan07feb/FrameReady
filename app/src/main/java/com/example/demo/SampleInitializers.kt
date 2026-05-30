@@ -12,10 +12,10 @@ class AInitializer : FrameReadyInitializer<String> {
 
     override fun executionThread() = ExecutionThread.BACKGROUND
 
-    override fun create(context: Context): String {
+    override suspend fun create(context: Context): String {
         Log.i("SampleInitializer", "AInitializer starting on ${Thread.currentThread().name}")
-        // Simulate background work
-        Thread.sleep(800)
+        // Simulate background work elegantly with non-blocking delay
+        delay(800)
         Log.i("SampleInitializer", "AInitializer completed!")
         return "Core Services Active"
     }
@@ -26,14 +26,14 @@ class BInitializer : FrameReadyInitializer<String> {
 
     override fun executionThread() = ExecutionThread.BACKGROUND
 
-    override fun create(context: Context): String {
+    override suspend fun create(context: Context): String {
         Log.i("SampleInitializer", "BInitializer starting on ${Thread.currentThread().name}")
         // Under Rule 1 of FrameReady, A is guaranteed to be done before B starts.
         val aResult = FrameReady.getOrNull(AInitializer::class.java)
             ?: throw IllegalStateException("A must have completed first!")
         
-        // Simulate background DB work
-        Thread.sleep(600)
+        // Simulate background DB work elegantly with non-blocking delay
+        delay(600)
         Log.i("SampleInitializer", "BInitializer completed (A was: $aResult)!")
         return "Local SQL DB Connected [a: $aResult]"
     }
@@ -44,7 +44,7 @@ class CInitializer : FrameReadyInitializer<String> {
 
     override fun executionThread() = ExecutionThread.MAIN
 
-    override fun create(context: Context): String {
+    override suspend fun create(context: Context): String {
         Log.i("SampleInitializer", "CInitializer starting on ${Thread.currentThread().name}")
         // Under Rule 1 of FrameReady, B is guaranteed to be done before C starts.
         val bResult = FrameReady.getOrNull(BInitializer::class.java)

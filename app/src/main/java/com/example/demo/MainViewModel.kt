@@ -18,7 +18,16 @@ data class UiState(
     val lateAwaitStatus: String = "Not Started",
     val lateAwaitTimeMs: Long = 0,
     val startupMetrics: StartupMetrics? = null,
-    val metricsCallbackFired: Boolean = false
+    val metricsCallbackFired: Boolean = false,
+    
+    // Interactive Benchmark Sim states
+    val isSimulating: Boolean = false,
+    val simProgress: Float = 0f,
+    val simCurrentStep: String = "",
+    val simAppClassTtff: Long = 0,
+    val simAndroidXTtff: Long = 0,
+    val simFrameReadyTtff: Long = 0,
+    val activeApproachIndex: Int = -1 // -1: Not simulated, 0: App Class, 1: AndroidX Startup, 2: FrameReady
 )
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -70,6 +79,99 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 it.copy(
                     lateAwaitStatus = "Completed Instantly! Result: \"$cResult\"",
                     lateAwaitTimeMs = duration
+                )
+            }
+        }
+    }
+
+    /**
+     * 4. ADVANCED BENCHMARK SIMULATION RUNNER
+     * Animates and simulates live thread behaviors for the three approaches side by side.
+     */
+    fun runBenchmarkSimulation() {
+        viewModelScope.launch {
+            _uiState.update { 
+                it.copy(
+                    isSimulating = true,
+                    simProgress = 0f,
+                    simCurrentStep = "Preparing comparison sandbox configuration...",
+                    activeApproachIndex = 0,
+                    simAppClassTtff = 0,
+                    simAndroidXTtff = 0,
+                    simFrameReadyTtff = 0
+                )
+            }
+            
+            // App class delay
+            kotlinx.coroutines.delay(800)
+            _uiState.update { 
+                it.copy(
+                    simCurrentStep = "Application.onCreate() started. Invoking heavy synchronized initializers on the Main thread...",
+                    simProgress = 0.1f
+                )
+            }
+            
+            // Simulating a 3 second frozen Main Thread
+            for (i in 1..20) {
+                kotlinx.coroutines.delay(100)
+                _uiState.update { 
+                    it.copy(
+                        simProgress = 0.1f + (i * 0.015f)
+                    )
+                }
+            }
+            
+            _uiState.update { 
+                it.copy(
+                    simCurrentStep = "Main thread finally escapes Thread.sleep(). First layout painted to screen.",
+                    simAppClassTtff = 3120,
+                    simProgress = 0.45f,
+                    activeApproachIndex = 1
+                )
+            }
+            
+            // App Start delay
+            kotlinx.coroutines.delay(1200)
+            _uiState.update { 
+                it.copy(
+                    simCurrentStep = "AndroidX App Startup Initializer.create() loaded. Holding visual rendering queue...",
+                    simProgress = 0.55f
+                )
+            }
+            
+            for (i in 1..20) {
+                kotlinx.coroutines.delay(100)
+                _uiState.update { 
+                    it.copy(
+                        simProgress = 0.55f + (i * 0.015f)
+                    )
+                }
+            }
+            
+            _uiState.update { 
+                it.copy(
+                    simCurrentStep = "Initializer completes. Visual content provider installs completed.",
+                    simAndroidXTtff = 3050,
+                    simProgress = 0.85f,
+                    activeApproachIndex = 2
+                )
+            }
+            
+            // FrameReady delay
+            kotlinx.coroutines.delay(1200)
+            _uiState.update { 
+                it.copy(
+                    simCurrentStep = "FrameReady installs. Renders first visual frame instantly, then schedules background pool...",
+                    simProgress = 0.92f
+                )
+            }
+            kotlinx.coroutines.delay(500)
+            _uiState.update { 
+                it.copy(
+                    simCurrentStep = "Choreographer rasterization completes in 180ms! Fluid UI available immediately.",
+                    simFrameReadyTtff = 182,
+                    simProgress = 1.0f,
+                    isSimulating = false
                 )
             }
         }

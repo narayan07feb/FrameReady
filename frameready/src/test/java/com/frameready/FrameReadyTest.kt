@@ -42,12 +42,12 @@ class FrameReadyTest {
 
     class TestInitA : FrameReadyInitializer<String> {
         override fun dependencies() = emptyList<Class<out FrameReadyInitializer<*>>>()
-        override fun create(context: Context): String = "Result_A"
+        override suspend fun create(context: Context): String = "Result_A"
     }
 
     class TestInitB : FrameReadyInitializer<String> {
         override fun dependencies() = listOf(TestInitA::class.java)
-        override fun create(context: Context): String {
+        override suspend fun create(context: Context): String {
             val a = FrameReady.getOrNull(TestInitA::class.java) ?: "Null_A"
             return "Result_B_with_$a"
         }
@@ -55,7 +55,7 @@ class FrameReadyTest {
 
     class TestInitC : FrameReadyInitializer<String> {
         override fun dependencies() = listOf(TestInitB::class.java)
-        override fun create(context: Context): String {
+        override suspend fun create(context: Context): String {
             val b = FrameReady.getOrNull(TestInitB::class.java) ?: "Null_B"
             return "Result_C_with_$b"
         }
@@ -65,19 +65,19 @@ class FrameReadyTest {
 
     class CircularA : FrameReadyInitializer<String> {
         override fun dependencies() = listOf(CircularB::class.java)
-        override fun create(context: Context): String = "A"
+        override suspend fun create(context: Context): String = "A"
     }
 
     class CircularB : FrameReadyInitializer<String> {
         override fun dependencies() = listOf(CircularA::class.java)
-        override fun create(context: Context): String = "B"
+        override suspend fun create(context: Context): String = "B"
     }
 
     // --- FAILING INITIALIZER ---
 
     class FailingInit : FrameReadyInitializer<String> {
         override fun dependencies() = emptyList<Class<out FrameReadyInitializer<*>>>()
-        override fun create(context: Context): String {
+        override suspend fun create(context: Context): String {
             throw RuntimeException("Simulated Failure")
         }
     }
@@ -86,9 +86,29 @@ class FrameReadyTest {
 
     class SlowInit : FrameReadyInitializer<String> {
         override fun dependencies() = emptyList<Class<out FrameReadyInitializer<*>>>()
-        override fun create(context: Context): String {
-            Thread.sleep(1000)
+        override suspend fun create(context: Context): String {
+            kotlinx.coroutines.delay(1000)
             return "Done"
+        }
+    }
+
+    class BlockingInterruptibleInit : FrameReadyInitializer<String> {
+        companion object {
+            val wasInterrupted = java.util.concurrent.atomic.AtomicBoolean(false)
+        }
+
+        override fun dependencies() = emptyList<Class<out FrameReadyInitializer<*>>>()
+        override fun executionThread() = ExecutionThread.BACKGROUND
+        override fun timeoutMs() = 400L // 400ms timeout
+
+        override suspend fun create(context: Context): String {
+            try {
+                Thread.sleep(5000) // Sleep 5s (blocking)
+            } catch (e: InterruptedException) {
+                wasInterrupted.set(true)
+                throw e
+            }
+            return "Success"
         }
     }
 
@@ -296,6 +316,99 @@ class FrameReadyTest {
         // Must reset back to 0
         val count = sharedPrefs.getInt("consecutive_stable_launches", -1)
         assertEquals(0, count)
+    }
+
+    // ==========================================
+    // 9. DEADLOCK PREVENTION IN GET()
+    // ==========================================
+    @Test
+    fun testGet_OnMainThreadBeforeCompletion_ThrowsException() {
+        FrameReady.install(context, listOf(TestInitA::class.java))
+        
+        try {
+            FrameReady.get(TestInitA::class.java)
+            fail("Expected IllegalStateException due to Main Thread deadlock checking!")
+        } catch (e: IllegalStateException) {
+            assertTrue(e.message!!.contains("Rule 4 Violation & Deadlock Risk"))
+        }
+    }
+
+    // ==========================================
+    // 10. EXPLICIT TRAMPOLINE REGISTRATION
+    // ==========================================
+    @Test
+    fun testExplicitTrampoline_SkipsImmediate() {
+        class CustomTrampolineActivity : Activity()
+        
+        val app = context.applicationContext as Application
+        FrameReady.install(app, listOf(TestInitA::class.java))
+        FrameReady.trampolineActivities.add(CustomTrampolineActivity::class.java)
+
+        val activity = Robolectric.buildActivity(CustomTrampolineActivity::class.java).get()
+        val callbacks = getRegisteredCallbacks(app)
+        
+        callbacks.onActivityCreated(activity, null)
+        callbacks.onActivityStarted(activity)
+        callbacks.onActivityResumed(activity)
+
+        // Run full looper past any thresholds
+        shadowOf(Looper.getMainLooper()).idleFor(1000, java.util.concurrent.TimeUnit.MILLISECONDS)
+
+        // Should skip triggering due to explicit trampoline registration
+        assertNull(FrameReady.getOrNull(TestInitA::class.java))
+    }
+
+    // ==========================================
+    // 11. CUMULATIVE INITIALIZER REGISTRATION
+    // ==========================================
+    @Test
+    fun testCumulativeInstallation_SavesNodes() {
+        FrameReady.install(context, listOf(TestInitA::class.java))
+        // Incrementally install B
+        FrameReady.install(context, listOf(TestInitB::class.java))
+
+        val sorted = FrameReady::class.java.getDeclaredField("sortedInitializers").apply {
+            isAccessible = true
+        }.get(null) as List<*>
+
+        assertTrue(sorted.contains(TestInitA::class.java))
+        assertTrue(sorted.contains(TestInitB::class.java))
+    }
+
+    // ==========================================
+    // 12. RUNINTERRUPTIBLE & TIMEOUT SAFETY FOR SLEEPING THREADS
+    // ==========================================
+    @Test
+    fun testBlockingInitializer_WhenTimeoutExceeded_SafelyInterruptsThreadSleep() = kotlinx.coroutines.runBlocking {
+        BlockingInterruptibleInit.wasInterrupted.set(false)
+        FrameReady.install(context, listOf(BlockingInterruptibleInit::class.java))
+
+        val app = context.applicationContext as Application
+        val callbacks = getRegisteredCallbacks(app)
+        val activity = Robolectric.buildActivity(Activity::class.java).get()
+        
+        callbacks.onActivityCreated(activity, null)
+        callbacks.onActivityStarted(activity)
+        callbacks.onActivityResumed(activity)
+
+        // Run scheduler loop to let Choreographer fire & dispatch libraries
+        shadowOf(Looper.getMainLooper()).idleFor(500, java.util.concurrent.TimeUnit.MILLISECONDS)
+
+        try {
+            FrameReady.await(BlockingInterruptibleInit::class.java)
+            fail("Expected InitializerTimeoutException")
+        } catch (e: Exception) {
+            val unwrapped = if (e is java.util.concurrent.ExecutionException) e.cause ?: e else e
+            assertTrue(
+                "Expected InitializerTimeoutException but got: ${unwrapped::class.java.simpleName}",
+                unwrapped is InitializerTimeoutException
+            )
+        }
+
+        assertTrue(
+            "Expected the blocked Thread.sleep inside the initializer to be interrupted, but it wasn't!",
+            BlockingInterruptibleInit.wasInterrupted.get()
+        )
     }
 
     private fun getRegisteredCallbacks(app: Application): Application.ActivityLifecycleCallbacks {

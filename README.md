@@ -46,7 +46,7 @@ class AInitializer : FrameReadyInitializer<String> {
     
     override fun executionThread() = ExecutionThread.BACKGROUND
 
-    override fun create(context: Context): String {
+    override suspend fun create(context: Context): String {
         // Perform file / network / disk setup
         return "Core Config Active"
     }
@@ -59,7 +59,7 @@ If task `B` depends on task `A`'s finished output, declare it under `dependencie
 class BInitializer : FrameReadyInitializer<Database> {
     override fun dependencies() = listOf(AInitializer::class.java)
 
-    override fun create(context: Context): Database {
+    override suspend fun create(context: Context): Database {
         // A is guaranteed to be finished here. Safe to call getOrNull!
         val config = FrameReady.getOrNull(AInitializer::class.java)!!
         return Database.init(context, config)
@@ -139,6 +139,77 @@ FrameReady.setMetricsListener { metrics ->
 
 ---
 
+## 💉 Dependency Injection & Hilt Integration
+
+Because initializers must have a zero-argument default constructor for instantiation, you cannot use constructor injection (`@Inject`) directly in a `FrameReadyInitializer`. 
+
+Instead, you can resolve Hilt-managed services using **Hilt Entry Points**, or expose asynchronous values initialized by `FrameReady` back into the Hilt dependency graph.
+
+### 1. Requesting Hilt-managed dependencies inside an Initializer
+
+You can use `@EntryPoint` to access Hilt-managed bindings inside `create(context)` safely:
+
+```kotlin
+import android.content.Context
+import com.frameready.FrameReadyInitializer
+import com.frameready.ExecutionThread
+import dagger.hilt.EntryPoint
+import dagger.hilt.InstallIn
+import dagger.hilt.android.EntryPointAccessors
+import dagger.hilt.components.SingletonComponent
+
+class DatabaseInitializer : FrameReadyInitializer<SQLiteDatabase> {
+    override fun dependencies() = emptyList<Class<out FrameReadyInitializer<*>>>()
+    override fun executionThread() = ExecutionThread.BACKGROUND
+
+    // Declare the Hilt EntryPoint
+    @EntryPoint
+    @InstallIn(SingletonComponent::class)
+    interface DatabaseInitializerEntryPoint {
+        fun getDatabaseHelper(): DatabaseHelper
+    }
+
+    override suspend fun create(context: Context): SQLiteDatabase {
+        // Retrieve the entry point accessor from application context
+        val entryPoint = EntryPointAccessors.fromApplication(
+            context, 
+            DatabaseInitializerEntryPoint::class.java
+        )
+        
+        val helper = entryPoint.getDatabaseHelper()
+        return helper.writableDatabase
+    }
+}
+```
+
+### 2. Providing FrameReady values asynchronously to the Hilt Graph
+
+If other components in your Hilt graph require a post-first-frame dependency initialized by `FrameReady`, you can expose it using `@Provides` inside a Hilt module by suspended injection or using a helper provider:
+
+```kotlin
+import dagger.Module
+import dagger.Provides
+import dagger.hilt.InstallIn
+import dagger.hilt.components.SingletonComponent
+import javax.inject.Singleton
+
+@Module
+@InstallIn(SingletonComponent::class)
+object ProviderModule {
+
+    @Provides
+    @Singleton
+    fun provideAsyncDatabase(): suspend () -> SQLiteDatabase {
+        return {
+            // Suspends until FrameReady has successfully completed the initialization
+            FrameReady.await(DatabaseInitializer::class.java)
+        }
+    }
+}
+```
+
+---
+
 ## 🛠 Setup & Installation
 
 ### Option A: Zero-Config (Auto-Install)
@@ -194,6 +265,51 @@ class MyApplication : Application() {
     }
 }
 ```
+
+---
+
+## 🛡 Advanced Safety Policies & Customization
+
+FrameReady includes enterprise-grade guardrails to ensure robust delivery under edge cases or developer misconfigurations:
+
+### 1. Cumulative & Incremental Registration
+`FrameReady.install()` is thread-safe and supports multi-pass installation. If features in modular repositories register elements independently at separate times, they are merged cumulatively into the topological graph. Submissions are finalized only once the first frame has successfully drawn to the screen.
+
+### 2. Double-Buffered Frame Rasterization
+Instead of triggering immediately when a callback is queued, FrameReady uses a **double-buffered postFrameCallback loop**. This guarantees that the first layout pass is fully rasterized and visual pixels on the screen are completely rendered before initializers are granted compute resources.
+
+### 3. Strict Main-Thread Deadlock Prevention
+If `.get(Initializer)` is called on the Main Thread before that initializer completes, the library throws an explicit `IllegalStateException` with a descriptive message rather than silently pausing/deadlocking the main thread, allowing developers to spot violations immediately.
+
+### 4. Custom Trampolines & Flexible Thresholds
+Easily register customized splash-screens, transient webviews, or specific deep-link routers that should immediately skip triggering first frame:
+```kotlin
+// Extend or restrict the trampoline scan delay
+FrameReady.trampolineThresholdMs = 300L
+
+// Register custom activities that are known trampolines
+FrameReady.trampolineActivities.add(MyCustomSplashActivity::class.java)
+```
+
+### 5. Localized Exception Isolation
+If any initializer fails (including runtime crashes or timeouts), the error is isolated locally and the respective deferred outputs are completed exceptionally. Unrelated peer initializers continue running unaffected, while the library resets its consecutive stability counters to protect performance tracking integrity.
+
+### 6. Blocking Thread Interruption & Timeouts
+For legacy SDKs or tasks containing non-suspendable blocking work (e.g. `Thread.sleep` or synchronous socket/disk reads), FrameReady executes them wrapped in `kotlinx.coroutines.runInterruptible`.
+
+You can set custom safety timeout limits per initializer:
+```kotlin
+class MyLegacySdkInitializer : FrameReadyInitializer<String> {
+    override fun timeoutMs(): Long = 3000L // 3-second timeout
+
+    override suspend fun create(context: Context): String {
+        // Even though this blocks, it will be interrupted at 3000ms!
+        Thread.sleep(5000) 
+        return "Loaded"
+    }
+}
+```
+If a timeout is hit, FrameReady triggers `Thread.interrupt()` executing the blocked block, raises an `InterruptedException` to release the thread instantly, and completes exceptionally with `InitializerTimeoutException`.
 
 ---
 
