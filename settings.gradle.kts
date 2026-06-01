@@ -26,3 +26,10 @@ rootProject.name = "My Application"
 
 include(":app")
 include(":frameready")
+include(":sample-standard")
+include(":sample-trampoline")
+include(":sample-notification")
+include(":sample-hilt")
+include(":sample-appstartup")
+
+

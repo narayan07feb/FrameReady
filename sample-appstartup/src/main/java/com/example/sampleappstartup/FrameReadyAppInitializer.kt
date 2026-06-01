@@ -1,7 +1,8 @@
-package com.frameready
+package com.example.sampleappstartup
 
 import android.content.Context
 import androidx.startup.Initializer
+import com.frameready.FrameReady
 
 /**
  * An App Startup [Initializer] that acts as a bridge, letting androidx.startup
@@ -17,7 +18,7 @@ class FrameReadyAppInitializer : Initializer<Unit> {
         FrameReady.install(context, emptyList())
     }
 
-    override fun dependencies(): List<Class<out Initializer<*>>> {
+    override fun dependencies(): List<Class<out Initializer<out Any>>> {
         return emptyList()
     }
 }

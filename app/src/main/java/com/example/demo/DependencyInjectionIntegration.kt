@@ -48,7 +48,7 @@ object SampleKoinModules {
  */
 class KoinFrameReadyInitializer : FrameReadyInitializer<Boolean> {
     
-    override fun dependencies(): List<Class<out FrameReadyInitializer<*>>> {
+    override fun dependencies(): List<String> {
         return emptyList()
     }
 
@@ -77,16 +77,69 @@ class KoinFrameReadyInitializer : FrameReadyInitializer<Boolean> {
 // ARCHITECTURAL SAMPLE 2: HILT INTEGRATION & ASYNC INITIALIZATION
 // =========================================================================
 /**
- * Hilt resolves dependencies at compile-time and injects them synchronously.
- * If we have a heavyweight dependency component (e.g. SQLite database, network SDK) that needs to
- * be initialized asynchronously without blocking the UI, we can use a double-layered structure:
+ * DOES HILT SUPPORT Kotlin 'suspend' FUNCTIONS DIRECTLY?
  * 
- * 1. Inject a Deferred or a holder component via Hilt.
- * 2. Use a FrameReadyInitializer to asynchronously initialize and populate that holder.
- * 3. Have the consumer classes call and suspend on FrameReady.await() before referencing the dependency.
+ * Short answer: No, Hilt do not support injecting suspended constructors or 
+ * suspended values synchronously, because Android object instantiation (e.g. ViewModels,
+ * Activities) is strictly synchronous. 
+ *
+ * Long answer: YES, Hilt can support asynchronous initialization by injecting
+ * "Asynchronous Gateways". There are three main patterns to achieve this:
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * PATTERN A: The Suspended Lambda Provider (Recommended)
+ * ─────────────────────────────────────────────────────────────────────────
+ * Tell Hilt to inject a `suspend () -> T` function type. Since Kotlin compiles
+ * this functional type to a standard JVM class (Function1), Hilt can inject it 
+ * synchronously. The consumer can then suspend safely within its execution context.
+ *
+ * [Hilt Module Example]:
+ * ```kotlin
+ * @Module
+ * @InstallIn(SingletonComponent::class)
+ * object DatabaseModule {
+ *     @Provides
+ *     @Singleton
+ *     fun provideAsyncDatabase(): suspend () -> SQLiteDatabase {
+ *         return {
+ *             // Await the asynchronous FrameReady initialization sequence
+ *             FrameReady.await(DatabaseInitializer::class.java)
+ *         }
+ *     }
+ * }
+ * ```
+ *
+ * [Consumer Injection Example]:
+ * ```kotlin
+ * @HiltViewModel
+ * class MyViewModel @Inject constructor(
+ *     private val dbProvider: suspend () -> SQLiteDatabase
+ * ) : ViewModel() {
+ *     init {
+ *         viewModelScope.launch {
+ *             val db = dbProvider() // Suspends execution until the DB is ready!
+ *             db.query(...)
+ *         }
+ *     }
+ * }
+ * ```
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * PATTERN B: The Deferred / Completable Approach
+ * ─────────────────────────────────────────────────────────────────────────
+ * Inject a `Deferred<T>` or a singleton Connection Holder. Hilt injects the
+ * holder synchronously, and when any operation is performed, the consumer suspends
+ * on the initialization.
+ * 
+ * ─────────────────────────────────────────────────────────────────────────
+ * PATTERN C: The EntryPoint Approach
+ * ─────────────────────────────────────────────────────────────────────────
+ * Since FrameReadyInitializers are instantiated with empty constructors, you
+ * cannot use constructor injection. Instead, retrieve dependencies from Hilt
+ * using `EntryPointAccessors`.
  */
 
-// The holder wrapper injected by Hilt synchronously
+// The holder wrapper injected by Hilt synchronously (PATTERN B)
 class AsyncDatabaseHolder {
     private var actualDatabaseConnection: Any? = null
     
@@ -110,6 +163,15 @@ object HiltDatabaseModule {
     fun provideDatabaseHolder(): AsyncDatabaseHolder {
         return AsyncDatabaseHolder()
     }
+
+    // Demonstrates Pattern A (Suspended lambda provider):
+    // @Provides
+    // @Singleton
+    // fun provideAsyncDatabaseStub(): suspend () -> Any {
+    //     return {
+    //         FrameReady.await(DatabaseFrameReadyInitializer::class.java)
+    //     }
+    // }
 }
 
 /**
@@ -118,7 +180,7 @@ object HiltDatabaseModule {
  */
 class DatabaseFrameReadyInitializer : FrameReadyInitializer<Any> {
     
-    override fun dependencies(): List<Class<out FrameReadyInitializer<*>>> {
+    override fun dependencies(): List<String> {
         return emptyList()
     }
 

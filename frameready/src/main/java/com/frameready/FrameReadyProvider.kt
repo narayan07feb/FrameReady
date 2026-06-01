@@ -16,6 +16,7 @@ import android.util.Log
 class FrameReadyProvider : ContentProvider() {
 
     override fun onCreate(): Boolean {
+        FrameReady.contentProviderStartTime = android.os.SystemClock.elapsedRealtime()
         val context = context ?: return false
         val packageManager = context.packageManager
         val providerName = ComponentName(context, FrameReadyProvider::class.java)
@@ -25,16 +26,16 @@ class FrameReadyProvider : ContentProvider() {
             val metadata = providerInfo.metaData
 
             if (metadata != null) {
-                val initializersList = mutableListOf<Class<out FrameReadyInitializer<*>>>()
+                val initializersList = mutableListOf<Class<Any>>()
                 val keys = metadata.keySet()
                 for (key in keys) {
                     val value = metadata.getString(key)
                     if (value == "post_frame_initializer") {
                         try {
-                            val clazz = Class.forName(key)
+                            @Suppress("UNCHECKED_CAST")
+                            val clazz = Class.forName(key) as Class<Any>
                             if (FrameReadyInitializer::class.java.isAssignableFrom(clazz)) {
-                                @Suppress("UNCHECKED_CAST")
-                                initializersList.add(clazz as Class<out FrameReadyInitializer<*>>)
+                                initializersList.add(clazz)
                             } else {
                                 Log.e(TAG, "Class $key is not an instance of FrameReadyInitializer.")
                             }

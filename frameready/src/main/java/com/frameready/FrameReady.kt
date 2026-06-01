@@ -11,7 +11,8 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
-import android.view.Choreographer
+import android.view.View
+import android.view.ViewTreeObserver
 import androidx.annotation.VisibleForTesting
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -42,7 +43,10 @@ data class StartupMetrics(
     val ttffP50: Long,              // P50 percentile value for stable launches
     val ttffP90: Long,              // P90 percentile value for stable launches
     val ttffP99: Long,              // P99 percentile value for stable launches
-    val netImprovementRate: Double   // percentage of cold-start improvement over baseline
+    val netImprovementRate: Double,  // percentage of cold-start improvement over baseline
+    val coldStartRate: Double = 100.0, // percentage of total launches that are cold starts
+    val displayedMs: Long = 0L,       // process start -> first draw completed in milliseconds
+    val activityName: String = ""    // name of the activity that completed drawing
 )
 
 object FrameReady {
@@ -50,6 +54,8 @@ object FrameReady {
     private const val PREFS_NAME = "frame_ready_preferences"
     private const val KEY_STABLE_COUNT = "consecutive_stable_launches"
     private const val KEY_TTFF_HISTORY = "ttff_historical_times"
+    private const val KEY_TOTAL_LAUNCHES = "total_launches_count"
+    private const val KEY_COLD_LAUNCHES = "cold_launches_count"
     private const val DEFAULT_STABLE_THRESHOLD = 100
 
     private val libraryScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -57,8 +63,8 @@ object FrameReady {
     private var globalAppContext: Context? = null
 
     // Result store
-    private val resultMap = ConcurrentHashMap<Class<*>, CompletableDeferred<Any>>()
-    private val initializers = ConcurrentHashMap.newKeySet<Class<out FrameReadyInitializer<*>>>()
+    private val resultMap = ConcurrentHashMap<Class<Any>, CompletableDeferred<Any?>>()
+    private val initializers = ConcurrentHashMap.newKeySet<Class<Any>>()
     
     private val isInstalled = AtomicBoolean(false)
     private val hasTriggered = AtomicBoolean(false)
@@ -66,8 +72,15 @@ object FrameReady {
     @VisibleForTesting
     internal var appOnCreateTime: Long = SystemClock.elapsedRealtime()
 
-    private var sortedInitializers: List<Class<out FrameReadyInitializer<*>>>? = null
+    @Volatile
+    var contentProviderStartTime: Long = SystemClock.elapsedRealtime()
+
+    private var sortedInitializers: List<Class<Any>>? = null
     private var metricsListener: ((StartupMetrics) -> Unit)? = null
+
+    private val isExecutingInUnitTest by lazy {
+        runCatching { Class.forName("org.robolectric.Robolectric") }.isSuccess
+    }
     
     // Configurable thresholds for testing/open-source adoption
     var baselineTtffMs: Long = 350L
@@ -82,6 +95,9 @@ object FrameReady {
     private val activeActivitiesCount = AtomicInteger(0)
     private val trampolineSkipCount = AtomicInteger(0)
     private var lifecycleCallbacks: Application.ActivityLifecycleCallbacks? = null
+
+    private val coldLaunchCounted = AtomicBoolean(false)
+    private val firstActivityStartedInProcess = AtomicBoolean(false)
 
     data class ActivityEntry(
         val activity: WeakReference<Activity>,
@@ -104,9 +120,16 @@ object FrameReady {
     }
 
     /**
+     * Clears the metrics listener to prevent memory leaks in case of Activity/View reference captures.
+     */
+    fun removeMetricsListener() {
+        this.metricsListener = null
+    }
+
+    /**
      * Thread-safe cumulative manual/auto configuration entry point.
      */
-    fun install(context: Context, initClasses: List<Class<out FrameReadyInitializer<*>>>) {
+    fun install(context: Context, initClasses: List<Class<Any>>) {
         if (hasTriggered.get()) {
             Log.w(TAG, "Already triggered first frame. Rejecting cumulative initializer registration.")
             return
@@ -114,6 +137,18 @@ object FrameReady {
 
         val appContext = context.applicationContext as Application
         globalAppContext = appContext
+
+        if (coldLaunchCounted.compareAndSet(false, true)) {
+            libraryScope.launch(Dispatchers.IO) {
+                val prefs = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                val coldCount = prefs.getInt(KEY_COLD_LAUNCHES, 0) + 1
+                val totalCount = prefs.getInt(KEY_TOTAL_LAUNCHES, 0) + 1
+                prefs.edit()
+                    .putInt(KEY_COLD_LAUNCHES, coldCount)
+                    .putInt(KEY_TOTAL_LAUNCHES, totalCount)
+                    .apply()
+            }
+        }
 
         synchronized(this) {
             if (initClasses.isNotEmpty()) {
@@ -153,7 +188,7 @@ object FrameReady {
      * Retrieves the typed CompletableDeferred for an initializer.
      */
     @Suppress("UNCHECKED_CAST")
-    fun <T> getDeferred(clazz: Class<*>): CompletableDeferred<T> {
+    fun <T> getDeferred(clazz: Class<Any>): CompletableDeferred<T> {
         return resultMap.getOrPut(clazz) { CompletableDeferred() } as CompletableDeferred<T>
     }
 
@@ -162,8 +197,8 @@ object FrameReady {
      */
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     @Suppress("UNCHECKED_CAST")
-    fun <T> getOrNull(clazz: Class<out FrameReadyInitializer<T>>): T? {
-        val deferred = resultMap[clazz] ?: return null
+    fun <T, C : FrameReadyInitializer<T>> getOrNull(clazz: Class<C>): T? {
+        val deferred = resultMap[clazz as Class<Any>] ?: return null
         return if (deferred.isCompleted) {
             runCatching { deferred.getCompleted() as T }.getOrNull()
         } else {
@@ -175,8 +210,9 @@ object FrameReady {
      * Thread-safe blocking getter. Throws an explicit IllegalStateException when called on
      * Android's main thread before completion to protect developers from black-screen deadlocks.
      */
-    fun <T> get(clazz: Class<out FrameReadyInitializer<T>>): T {
-        val deferred = resultMap[clazz] ?: throw IllegalStateException("Initializer ${clazz.simpleName} was never installed.")
+    fun <T, C : FrameReadyInitializer<T>> get(clazz: Class<C>): T {
+        @Suppress("UNCHECKED_CAST")
+        val deferred = resultMap[clazz as Class<Any>] ?: throw IllegalStateException("Initializer ${clazz.simpleName} was never installed.")
         if (!deferred.isCompleted && Looper.myLooper() == Looper.getMainLooper()) {
             throw IllegalStateException(
                 "Rule 4 Violation & Deadlock Risk! Blocking 'get()' called on the Main thread before " +
@@ -190,11 +226,12 @@ object FrameReady {
     /**
      * Suspending awaiter. Implements the wait/suspend contract cleanly with adjustable timeout.
      */
-    suspend fun <T> await(
-        clazz: Class<out FrameReadyInitializer<T>>,
+    suspend fun <T, C : FrameReadyInitializer<T>> await(
+        clazz: Class<C>,
         timeoutMs: Long = 5000L
     ): T {
-        val deferred = getDeferred<T>(clazz)
+        @Suppress("UNCHECKED_CAST")
+        val deferred = getDeferred<T>(clazz as Class<Any>)
         try {
             return withTimeout(timeoutMs) {
                 deferred.await()
@@ -214,27 +251,33 @@ object FrameReady {
     @VisibleForTesting
     internal fun resetStabilityCount(context: Context) {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        prefs.edit().putInt(KEY_STABLE_COUNT, 0).apply()
+        prefs.edit()
+            .putInt(KEY_STABLE_COUNT, 0)
+            .putInt(KEY_COLD_LAUNCHES, 1)
+            .putInt(KEY_TOTAL_LAUNCHES, 1)
+            .putString(KEY_TTFF_HISTORY, "")
+            .apply()
     }
 
     /**
      * Generates topological order of initializers via Kahn's algorithm.
      */
     @VisibleForTesting
-    internal fun sort(classes: List<Class<out FrameReadyInitializer<*>>>): List<Class<out FrameReadyInitializer<*>>> {
-        val allNodes = mutableSetOf<Class<out FrameReadyInitializer<*>>>()
-        val adjacencyList = mutableMapOf<Class<out FrameReadyInitializer<*>>, MutableList<Class<out FrameReadyInitializer<*>>>>()
-        val inDegree = mutableMapOf<Class<out FrameReadyInitializer<*>>, Int>()
+    internal fun sort(classes: List<Class<Any>>): List<Class<Any>> {
+        val allNodes = mutableSetOf<Class<Any>>()
+        val adjacencyList = mutableMapOf<Class<Any>, MutableList<Class<Any>>>()
+        val inDegree = mutableMapOf<Class<Any>, Int>()
 
         // Recursively extract all elements to include transitively declared dependency classes
-        fun scan(clazz: Class<out FrameReadyInitializer<*>>) {
+        fun scan(clazz: Class<Any>) {
             if (allNodes.add(clazz)) {
                 try {
-                    val instance = clazz.getDeclaredConstructor().newInstance()
+                    val instance = clazz.getDeclaredConstructor().newInstance() as FrameReadyInitializer<Any?>
                     val deps = instance.dependencies()
                     for (dep in deps) {
                         @Suppress("UNCHECKED_CAST")
-                        scan(dep as Class<out FrameReadyInitializer<*>>)
+                        val depClass = Class.forName(dep) as Class<Any>
+                        scan(depClass)
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "Failed scanning dependencies for: ${clazz.name}", e)
@@ -254,10 +297,10 @@ object FrameReady {
         // Build edges: dependency -> element (dependency runs first)
         allNodes.forEach { node ->
             try {
-                val instance = node.getDeclaredConstructor().newInstance()
+                val instance = node.getDeclaredConstructor().newInstance() as FrameReadyInitializer<Any?>
                 instance.dependencies().forEach { dep ->
                     @Suppress("UNCHECKED_CAST")
-                    val depClass = dep as Class<out FrameReadyInitializer<*>>
+                    val depClass = Class.forName(dep) as Class<Any>
                     adjacencyList[depClass]?.add(node)
                     inDegree[node] = (inDegree[node] ?: 0) + 1
                 }
@@ -267,14 +310,14 @@ object FrameReady {
         }
 
         // Kahn's Sort Algorithm
-        val queue = ArrayDeque<Class<out FrameReadyInitializer<*>>>()
+        val queue = ArrayDeque<Class<Any>>()
         allNodes.forEach { node ->
             if ((inDegree[node] ?: 0) == 0) {
                 queue.addLast(node)
             }
         }
 
-        val result = mutableListOf<Class<out FrameReadyInitializer<*>>>()
+        val result = mutableListOf<Class<Any>>()
         while (queue.isNotEmpty()) {
             val node = queue.removeFirst()
             result.add(node)
@@ -302,7 +345,16 @@ object FrameReady {
             }
 
             override fun onActivityStarted(activity: Activity) {
-                activeActivitiesCount.incrementAndGet()
+                val count = activeActivitiesCount.incrementAndGet()
+                if (count == 1) {
+                    if (!firstActivityStartedInProcess.compareAndSet(false, true)) {
+                        libraryScope.launch(Dispatchers.IO) {
+                            val prefs = activity.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                            val totalCount = prefs.getInt(KEY_TOTAL_LAUNCHES, 0) + 1
+                            prefs.edit().putInt(KEY_TOTAL_LAUNCHES, totalCount).apply()
+                        }
+                    }
+                }
             }
 
             override fun onActivityResumed(activity: Activity) {
@@ -313,8 +365,8 @@ object FrameReady {
                 val isExplicitTrampoline = trampolineActivities.contains(activity::class.java)
 
                 if (isNotificationStart) {
-                    // API 31+ Notification routing: skip delay overhead, schedule immediate Choreographer frame
-                    triggerChoreographer(activity.applicationContext)
+                    // API 31+ Notification routing: skip delay overhead, schedule immediate DecorView draw
+                    triggerFirstDraw(activity)
                 } else if (isExplicitTrampoline) {
                     if (Log.isLoggable(TAG, Log.DEBUG)) {
                         Log.d(TAG, "Explicit trampoline registered: ${activity.localClassName}, skipping frame trigger.")
@@ -322,14 +374,16 @@ object FrameReady {
                     trampolineSkipCount.incrementAndGet()
                 } else {
                     // Standard trampoline & splash flow
+                    val weakActivity = WeakReference(activity)
                     handler.postDelayed({
-                        val currentEntry = activityMap[activity] ?: return@postDelayed
+                        val act = weakActivity.get() ?: return@postDelayed
+                        val currentEntry = activityMap[act] ?: return@postDelayed
                         // If Activity continues to remain visible resumed (has not stopped, not finish) -> Real Activity
-                        if (!activity.isFinishing && !activity.isDestroyed && currentEntry.stoppedAt == 0L) {
-                            triggerChoreographer(activity.applicationContext)
+                        if (!act.isFinishing && !act.isDestroyed && currentEntry.stoppedAt == 0L) {
+                            triggerFirstDraw(act)
                         } else {
                             if (Log.isLoggable(TAG, Log.DEBUG)) {
-                                Log.d(TAG, "Trampoline detected: ${activity.localClassName}, skipping frame trigger.")
+                                Log.d(TAG, "Trampoline detected: ${act.localClassName}, skipping frame trigger.")
                             }
                             trampolineSkipCount.incrementAndGet()
                         }
@@ -368,51 +422,88 @@ object FrameReady {
 
     private fun isNotificationOriginated(activity: Activity): Boolean {
         val intent = activity.intent ?: return false
-        return intent.hasExtra("notification_id") || 
-               intent.hasExtra("from_notification") || 
-               intent.action?.contains("NOTIFICATION") == true
+        return try {
+            intent.hasExtra("notification_id") || 
+            intent.hasExtra("from_notification") || 
+            intent.action?.contains("NOTIFICATION") == true
+        } catch (e: Exception) {
+            // Protect against BadParcelableException from external intents
+            false
+        }
     }
 
-    private fun triggerChoreographer(context: Context) {
+    private fun triggerFirstDraw(activity: Activity) {
         if (hasTriggered.compareAndSet(false, true)) {
             // Clean up activity listener to avoid unnecessary overhead after trigger
-            unregisterCallbacks(context)
+            unregisterCallbacks(activity.applicationContext)
 
-            val isUnitTest = runCatching { Class.forName("org.robolectric.Robolectric") }.isSuccess
-
-            if (isUnitTest) {
+            if (isExecutingInUnitTest) {
                 // Inline fallback for headless test runners
                 handler.post {
                     val firstFrameTime = SystemClock.elapsedRealtime()
-                    runAll(context, firstFrameTime)
+                    runAll(activity.applicationContext, firstFrameTime, activity.localClassName)
                 }
             } else {
-                try {
-                    // Double-Buffered Deferral: wait for 2 full Choreographer frames
-                    // to ensure the first frame is completely drawn and rendered.
-                    Choreographer.getInstance().postFrameCallback {
-                        Choreographer.getInstance().postFrameCallback {
-                            val firstFrameTime = SystemClock.elapsedRealtime()
-                            runAll(context, firstFrameTime)
+                val decorView = activity.window?.decorView
+                if (decorView != null) {
+                    if (decorView.isAttachedToWindow) {
+                        registerOnNextDrawAndPost(activity, decorView)
+                    } else {
+                        val attachListener = object : android.view.View.OnAttachStateChangeListener {
+                            override fun onViewAttachedToWindow(v: android.view.View) {
+                                decorView.removeOnAttachStateChangeListener(this)
+                                registerOnNextDrawAndPost(activity, decorView)
+                            }
+                            override fun onViewDetachedFromWindow(v: android.view.View) {}
                         }
+                        decorView.addOnAttachStateChangeListener(attachListener)
                     }
-                } catch (e: Exception) {
-                    // Fallback inside headless/test environments where Choreographer may crash
-                    Log.w(TAG, "Choreographer unavailable. Falling back to Handler path.")
+                } else {
+                    // Fallback to post if decorView is null
                     handler.post {
                         val firstFrameTime = SystemClock.elapsedRealtime()
-                        runAll(context, firstFrameTime)
+                        runAll(activity.applicationContext, firstFrameTime, activity.localClassName)
                     }
                 }
             }
         }
     }
 
+    private fun registerOnNextDrawAndPost(activity: Activity, decorView: android.view.View) {
+        val observer = decorView.viewTreeObserver
+        val drawListener = object : android.view.ViewTreeObserver.OnDrawListener {
+            private var handled = false
+            override fun onDraw() {
+                if (handled) return
+                handled = true
+                // Post removal of listener to avoid exceptions during drawing pass
+                handler.post {
+                    if (decorView.viewTreeObserver.isAlive) {
+                        decorView.viewTreeObserver.removeOnDrawListener(this)
+                    }
+                }
+                
+                if (Build.VERSION.SDK_INT >= 29) {
+                    decorView.viewTreeObserver.registerFrameCommitCallback {
+                        val firstFrameTime = SystemClock.elapsedRealtime()
+                        runAll(activity.applicationContext, firstFrameTime, activity.localClassName)
+                    }
+                } else {
+                    decorView.postOnAnimation {
+                        val firstFrameTime = SystemClock.elapsedRealtime()
+                        runAll(activity.applicationContext, firstFrameTime, activity.localClassName)
+                    }
+                }
+            }
+        }
+        observer.addOnDrawListener(drawListener)
+    }
+
     private fun triggerBackgroundExecution(context: Context) {
         if (hasTriggered.compareAndSet(false, true)) {
             unregisterCallbacks(context)
             val shadowFrameTime = SystemClock.elapsedRealtime()
-            runAll(context, shadowFrameTime)
+            runAll(context, shadowFrameTime, "Background")
         }
     }
 
@@ -423,9 +514,11 @@ object FrameReady {
         activityMap.clear() // Clear references completely to prevent context/activity memory leaks
     }
 
-    private fun runAll(context: Context, firstFrameTime: Long) {
+    private fun runAll(context: Context, firstFrameTime: Long, activityName: String? = null) {
         val sorted = sortedInitializers ?: return
         val ttff = firstFrameTime - appOnCreateTime
+
+        val displayed = firstFrameTime - contentProviderStartTime
         
         val metrics = StartupMetrics(
             ttffMs = ttff,
@@ -438,7 +531,10 @@ object FrameReady {
             ttffP50 = 0L,
             ttffP90 = 0L,
             ttffP99 = 0L,
-            netImprovementRate = 0.0
+            netImprovementRate = 0.0,
+            coldStartRate = 100.0,
+            displayedMs = displayed,
+            activityName = activityName ?: ""
         )
 
         val trackerStart = SystemClock.elapsedRealtime()
@@ -453,15 +549,17 @@ object FrameReady {
         libraryScope.launch {
             val jobs = sorted.map { clazz ->
                 launch {
-                    val deferred = getDeferred<Any>(clazz)
+                    val deferred = getDeferred<Any?>(clazz)
                     try {
                         // Instantiate to find declared dependent nodes
-                        val instance = clazz.getDeclaredConstructor().newInstance()
+                        val instance = clazz.getDeclaredConstructor().newInstance() as FrameReadyInitializer<Any?>
                         
                         // Suspend-wait on all declared dependencies. If a dependency completes exceptionally,
                         // depDeferred.await() will throw, which is caught locally inside this try-catch.
                         instance.dependencies().forEach { dep ->
-                            val depDeferred = getDeferred<Any>(dep)
+                            @Suppress("UNCHECKED_CAST")
+                            val depClass = Class.forName(dep) as Class<Any>
+                            val depDeferred = getDeferred<Any?>(depClass)
                             depDeferred.await()
                         }
 
@@ -503,7 +601,7 @@ object FrameReady {
                                 instance.create(context)
                             }
                         }
-                        deferred.complete(result as Any)
+                        deferred.complete(result)
                     } catch (e: Throwable) {
                         Log.e(TAG, "Failed executing FrameReadyInitializer: ${clazz.name}", e)
                         deferred.completeExceptionally(e)
@@ -524,11 +622,11 @@ object FrameReady {
             handleStartupSuccess(context, metrics.copy(
                 initStartMs = initStartMsRef.get(),
                 initCompleteMs = initCompleteMs
-            ))
+            ), activityName)
         }
     }
 
-    private fun handleStartupSuccess(context: Context, partialMetrics: StartupMetrics) {
+    private fun handleStartupSuccess(context: Context, partialMetrics: StartupMetrics, activityName: String?) {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val currentStableCount = prefs.getInt(KEY_STABLE_COUNT, 0) + 1
         
@@ -559,13 +657,21 @@ object FrameReady {
             0.0
         }
 
+        val coldCount = prefs.getInt(KEY_COLD_LAUNCHES, 1)
+        val totalCount = prefs.getInt(KEY_TOTAL_LAUNCHES, 1).coerceAtLeast(coldCount)
+        val computedColdStartRate = (coldCount.toDouble() / totalCount.toDouble()) * 100.0
+
         val completedMetrics = partialMetrics.copy(
             stableLaunchCount = currentStableCount,
             ttffP50 = p50,
             ttffP90 = p90,
             ttffP99 = p99,
-            netImprovementRate = netImprovement
+            netImprovementRate = netImprovement,
+            coldStartRate = computedColdStartRate
         )
+
+        val displayedLogName = activityName ?: "App"
+        Log.i(TAG, "ActivityTaskManager [FrameReady-Logged]: Displayed $displayedLogName: +${completedMetrics.displayedMs}ms (coldStartRate: ${completedMetrics.coldStartRate}%)")
 
         // Only report to listener if N stable launches is satisfied
         if (currentStableCount >= stableThreshold) {
@@ -598,5 +704,7 @@ object FrameReady {
         trampolineSkipCount.set(0)
         lifecycleCallbacks = null
         globalAppContext = null
+        coldLaunchCounted.set(false)
+        firstActivityStartedInProcess.set(false)
     }
 }

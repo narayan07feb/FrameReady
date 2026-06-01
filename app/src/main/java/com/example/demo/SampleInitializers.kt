@@ -8,7 +8,7 @@ import com.frameready.FrameReady
 import kotlinx.coroutines.delay
 
 class AInitializer : FrameReadyInitializer<String> {
-    override fun dependencies() = emptyList<Class<out FrameReadyInitializer<*>>>()
+    override fun dependencies(): List<String> = emptyList()
 
     override fun executionThread() = ExecutionThread.BACKGROUND
 
@@ -22,7 +22,7 @@ class AInitializer : FrameReadyInitializer<String> {
 }
 
 class BInitializer : FrameReadyInitializer<String> {
-    override fun dependencies() = listOf(AInitializer::class.java)
+    override fun dependencies(): List<String> = listOf(AInitializer::class.java.name)
 
     override fun executionThread() = ExecutionThread.BACKGROUND
 
@@ -40,7 +40,7 @@ class BInitializer : FrameReadyInitializer<String> {
 }
 
 class CInitializer : FrameReadyInitializer<String> {
-    override fun dependencies() = listOf(BInitializer::class.java)
+    override fun dependencies(): List<String> = listOf(BInitializer::class.java.name)
 
     override fun executionThread() = ExecutionThread.MAIN
 

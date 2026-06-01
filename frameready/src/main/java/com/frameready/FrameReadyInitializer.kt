@@ -20,6 +20,7 @@ enum class ExecutionThread {
 /**
  * Interface representing a component that should be initialized after the first frame is drawn.
  */
+@JvmSuppressWildcards
 interface FrameReadyInitializer<T> {
     /**
      * Initializes the component and returns the initialized instance.
@@ -29,7 +30,7 @@ interface FrameReadyInitializer<T> {
     /**
      * Declares the list of dependencies that must complete initialization before this initializer starts.
      */
-    fun dependencies(): List<Class<out FrameReadyInitializer<*>>>
+    fun dependencies(): List<String>
 
     /**
      * Declares the execution thread (defaults to BACKGROUND).

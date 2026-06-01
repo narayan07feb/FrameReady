@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <application
+        android:allowBackup="true"
+        android:icon="@android:drawable/sym_def_app_icon"
+        android:label="FR Standard Sample"
+        android:supportsRtl="true"
+        android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
+
+        <activity
+            android:name="com.example.samplestandard.StandardMainActivity"
+            android:exported="true"
+            android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- FrameReady library auto-discovery via manifest metadata -->
+        <provider
+            android:name="com.frameready.FrameReadyProvider"
+            android:authorities="${applicationId}.frameready"
+            android:exported="false">
+            <meta-data
+                android:name="com.example.samplestandard.DatabaseInitializer"
+                android:value="post_frame_initializer" />
+            <meta-data
+                android:name="com.example.samplestandard.ConfigInitializer"
+                android:value="post_frame_initializer" />
+        </provider>
+
+
+    </application>
+
+</manifest>

@@ -43,15 +43,7 @@
                 android:value="post_frame_initializer" />
         </provider>
 
-        <provider
-            android:name="androidx.startup.InitializationProvider"
-            android:authorities="${applicationId}.androidx-startup"
-            android:exported="false"
-            tools:node="merge">
-            <meta-data
-                android:name="com.frameready.FrameReadyAppInitializer"
-                android:value="androidx.startup" />
-        </provider>
+
     </application>
 
 </manifest>

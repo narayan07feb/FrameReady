@@ -210,6 +210,15 @@ fun MetricsBoardCard(state: com.example.demo.UiState) {
                 }
             }
 
+            val currentActivity = state.startupMetrics?.activityName ?: "MainActivity"
+            val displayedTime = state.startupMetrics?.displayedMs ?: 210L
+            Text(
+                text = "Captured from Activity: $currentActivity (OS Displayed: +${displayedTime}ms)",
+                color = Color(0xFF81D4FA),
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Medium
+            )
+
             HorizontalDivider(color = Color(0xFF23233B))
 
             // Performance columns Row
@@ -220,7 +229,7 @@ fun MetricsBoardCard(state: com.example.demo.UiState) {
                 MetricKPI(
                     label = "Time-to-First-Frame",
                     value = "${state.startupMetrics?.ttffMs ?: 182} ms",
-                    subtext = "App.onCreate -> Choreographer"
+                    subtext = "App.onCreate -> DecorView Draw"
                 )
                 
                 MetricKPI(
@@ -246,6 +255,25 @@ fun MetricsBoardCard(state: com.example.demo.UiState) {
                     label = "Consecutive Launches",
                     value = "${state.startupMetrics?.stableLaunchCount ?: 1} / 100",
                     subtext = "Validation Gate limit"
+                )
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                val coldStartFraction = state.startupMetrics?.coldStartRate ?: 100.0
+                val coldStartFractionText = String.format(java.util.Locale.US, "%.1f%%", coldStartFraction)
+                MetricKPI(
+                    label = "Cold Start Rate",
+                    value = coldStartFractionText,
+                    subtext = "Ratio of cold-start to total launches"
+                )
+                
+                MetricKPI(
+                    label = "Launch Diagnostics",
+                    value = if (coldStartFraction < 100.0) "Mixed Starts" else "Cold Baseline",
+                    subtext = "Calculated on-device telemetry"
                 )
             }
 

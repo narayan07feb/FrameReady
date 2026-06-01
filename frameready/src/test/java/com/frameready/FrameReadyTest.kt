@@ -41,12 +41,12 @@ class FrameReadyTest {
     // --- TEST INITIALIZERS ---
 
     class TestInitA : FrameReadyInitializer<String> {
-        override fun dependencies() = emptyList<Class<out FrameReadyInitializer<*>>>()
+        override fun dependencies(): List<String> = emptyList()
         override suspend fun create(context: Context): String = "Result_A"
     }
 
     class TestInitB : FrameReadyInitializer<String> {
-        override fun dependencies() = listOf(TestInitA::class.java)
+        override fun dependencies(): List<String> = listOf(TestInitA::class.java.name)
         override suspend fun create(context: Context): String {
             val a = FrameReady.getOrNull(TestInitA::class.java) ?: "Null_A"
             return "Result_B_with_$a"
@@ -54,7 +54,7 @@ class FrameReadyTest {
     }
 
     class TestInitC : FrameReadyInitializer<String> {
-        override fun dependencies() = listOf(TestInitB::class.java)
+        override fun dependencies(): List<String> = listOf(TestInitB::class.java.name)
         override suspend fun create(context: Context): String {
             val b = FrameReady.getOrNull(TestInitB::class.java) ?: "Null_B"
             return "Result_C_with_$b"
@@ -64,19 +64,19 @@ class FrameReadyTest {
     // --- CIRCULAR TESTS ---
 
     class CircularA : FrameReadyInitializer<String> {
-        override fun dependencies() = listOf(CircularB::class.java)
+        override fun dependencies(): List<String> = listOf(CircularB::class.java.name)
         override suspend fun create(context: Context): String = "A"
     }
 
     class CircularB : FrameReadyInitializer<String> {
-        override fun dependencies() = listOf(CircularA::class.java)
+        override fun dependencies(): List<String> = listOf(CircularA::class.java.name)
         override suspend fun create(context: Context): String = "B"
     }
 
     // --- FAILING INITIALIZER ---
 
     class FailingInit : FrameReadyInitializer<String> {
-        override fun dependencies() = emptyList<Class<out FrameReadyInitializer<*>>>()
+        override fun dependencies(): List<String> = emptyList()
         override suspend fun create(context: Context): String {
             throw RuntimeException("Simulated Failure")
         }
@@ -85,7 +85,7 @@ class FrameReadyTest {
     // --- SLOW INITIALIZER ---
 
     class SlowInit : FrameReadyInitializer<String> {
-        override fun dependencies() = emptyList<Class<out FrameReadyInitializer<*>>>()
+        override fun dependencies(): List<String> = emptyList()
         override suspend fun create(context: Context): String {
             kotlinx.coroutines.delay(1000)
             return "Done"
@@ -97,7 +97,7 @@ class FrameReadyTest {
             val wasInterrupted = java.util.concurrent.atomic.AtomicBoolean(false)
         }
 
-        override fun dependencies() = emptyList<Class<out FrameReadyInitializer<*>>>()
+        override fun dependencies(): List<String> = emptyList()
         override fun executionThread() = ExecutionThread.BACKGROUND
         override fun timeoutMs() = 400L // 400ms timeout
 
@@ -118,13 +118,13 @@ class FrameReadyTest {
     @Test
     fun testDependencyOrdering_TopologicalSort() {
         // We supply nodes in reverse or scrambled order.
-        val input = listOf(TestInitC::class.java, TestInitB::class.java, TestInitA::class.java)
+        val input = listOf(TestInitC::class.java as Class<Any>, TestInitB::class.java as Class<Any>, TestInitA::class.java as Class<Any>)
         val sortedOutput = FrameReady.sort(input)
 
         // Index checks: A must be before B, B must be before C
-        val idxA = sortedOutput.indexOf(TestInitA::class.java)
-        val idxB = sortedOutput.indexOf(TestInitB::class.java)
-        val idxC = sortedOutput.indexOf(TestInitC::class.java)
+        val idxA = sortedOutput.indexOf(TestInitA::class.java as Class<Any>)
+        val idxB = sortedOutput.indexOf(TestInitB::class.java as Class<Any>)
+        val idxC = sortedOutput.indexOf(TestInitC::class.java as Class<Any>)
 
         assertTrue("A must run before B", idxA < idxB)
         assertTrue("B must run before C", idxB < idxC)
@@ -137,7 +137,7 @@ class FrameReadyTest {
     @Test
     fun testCircularDependency_FailsFast() {
         try {
-            FrameReady.install(context, listOf(CircularA::class.java))
+            FrameReady.install(context, listOf(CircularA::class.java as Class<Any>))
             fail("Expected CircularDependencyException to be thrown!")
         } catch (e: CircularDependencyException) {
             assertTrue(e.message!!.contains("circular dependency"))
@@ -150,7 +150,7 @@ class FrameReadyTest {
     @Test
     fun testAwait_BeforeCompletion_SuspendsAndResumes() = runTest {
         // Install initializers manual registration
-        FrameReady.install(context, listOf(TestInitA::class.java))
+        FrameReady.install(context, listOf(TestInitA::class.java as Class<Any>))
 
         val deferredResult = async {
             FrameReady.await(TestInitA::class.java)
@@ -163,10 +163,10 @@ class FrameReadyTest {
         @Suppress("UNCHECKED_CAST")
         val internalMap = FrameReady::class.java.getDeclaredField("resultMap").apply {
             isAccessible = true
-        }.get(null) as java.util.concurrent.ConcurrentHashMap<Class<*>, CompletableDeferred<Any>>
+        }.get(null) as java.util.concurrent.ConcurrentHashMap<Class<Any>, CompletableDeferred<Any?>>
 
         // Force complete Result
-        internalMap[TestInitA::class.java]?.complete("Manual_Result_A")
+        internalMap[TestInitA::class.java as Class<Any>]?.complete("Manual_Result_A")
 
         // Await should resume and yield correct result
         val resumedResult = deferredResult.await()
@@ -175,10 +175,10 @@ class FrameReadyTest {
 
     @Test
     fun testAwait_AfterCompletion_ReturnsImmediately() = runTest {
-        FrameReady.install(context, listOf(TestInitA::class.java))
+        FrameReady.install(context, listOf(TestInitA::class.java as Class<Any>))
 
         // Pre-complete it
-        FrameReady.getDeferred<String>(TestInitA::class.java).complete("Speedy_A")
+        FrameReady.getDeferred<String>(TestInitA::class.java as Class<Any>).complete("Speedy_A")
 
         val immediateResult = FrameReady.await(TestInitA::class.java)
         assertEquals("Speedy_A", immediateResult)
@@ -189,7 +189,7 @@ class FrameReadyTest {
     // ==========================================
     @Test
     fun testAwaitTimeout_ThrowsException() = runTest {
-        FrameReady.install(context, listOf(TestInitA::class.java))
+        FrameReady.install(context, listOf(TestInitA::class.java as Class<Any>))
 
         try {
             // Wait for only 50ms (will timeout as we never complete it)
@@ -205,10 +205,10 @@ class FrameReadyTest {
     // ==========================================
     @Test
     fun testExceptionPropagation_BubblesUp() = runTest {
-        FrameReady.install(context, listOf(FailingInit::class.java))
+        FrameReady.install(context, listOf(FailingInit::class.java as Class<Any>))
 
         // Force complete exceptionally to simulate runner failure
-        FrameReady.getDeferred<String>(FailingInit::class.java).completeExceptionally(
+        FrameReady.getDeferred<String>(FailingInit::class.java as Class<Any>).completeExceptionally(
             RuntimeException("Underlying Failure")
         )
 
@@ -226,7 +226,7 @@ class FrameReadyTest {
     @Test
     fun testTrampolineActivity_IsSkipped() {
         val app = context.applicationContext as Application
-        FrameReady.install(app, listOf(TestInitA::class.java))
+        FrameReady.install(app, listOf(TestInitA::class.java as Class<Any>))
 
         // Senders mock trampoline activity
         val mockActivity = Robolectric.buildActivity(Activity::class.java).get()
@@ -263,7 +263,7 @@ class FrameReadyTest {
     @Test
     fun testPrimaryActivity_SurvivesThreshold_TriggersStartup() {
         val app = context.applicationContext as Application
-        FrameReady.install(app, listOf(TestInitA::class.java))
+        FrameReady.install(app, listOf(TestInitA::class.java as Class<Any>))
 
         val mockActivity = Robolectric.buildActivity(Activity::class.java).get()
         val callbacks = getRegisteredCallbacks(app)
@@ -323,7 +323,7 @@ class FrameReadyTest {
     // ==========================================
     @Test
     fun testGet_OnMainThreadBeforeCompletion_ThrowsException() {
-        FrameReady.install(context, listOf(TestInitA::class.java))
+        FrameReady.install(context, listOf(TestInitA::class.java as Class<Any>))
         
         try {
             FrameReady.get(TestInitA::class.java)
@@ -341,7 +341,7 @@ class FrameReadyTest {
         class CustomTrampolineActivity : Activity()
         
         val app = context.applicationContext as Application
-        FrameReady.install(app, listOf(TestInitA::class.java))
+        FrameReady.install(app, listOf(TestInitA::class.java as Class<Any>))
         FrameReady.trampolineActivities.add(CustomTrampolineActivity::class.java)
 
         val activity = Robolectric.buildActivity(CustomTrampolineActivity::class.java).get()
@@ -363,13 +363,13 @@ class FrameReadyTest {
     // ==========================================
     @Test
     fun testCumulativeInstallation_SavesNodes() {
-        FrameReady.install(context, listOf(TestInitA::class.java))
+        FrameReady.install(context, listOf(TestInitA::class.java as Class<Any>))
         // Incrementally install B
-        FrameReady.install(context, listOf(TestInitB::class.java))
+        FrameReady.install(context, listOf(TestInitB::class.java as Class<Any>))
 
         val sorted = FrameReady::class.java.getDeclaredField("sortedInitializers").apply {
             isAccessible = true
-        }.get(null) as List<*>
+        }.get(null) as List<Any?>
 
         assertTrue(sorted.contains(TestInitA::class.java))
         assertTrue(sorted.contains(TestInitB::class.java))
@@ -381,7 +381,7 @@ class FrameReadyTest {
     @Test
     fun testBlockingInitializer_WhenTimeoutExceeded_SafelyInterruptsThreadSleep() = kotlinx.coroutines.runBlocking {
         BlockingInterruptibleInit.wasInterrupted.set(false)
-        FrameReady.install(context, listOf(BlockingInterruptibleInit::class.java))
+        FrameReady.install(context, listOf(BlockingInterruptibleInit::class.java as Class<Any>))
 
         val app = context.applicationContext as Application
         val callbacks = getRegisteredCallbacks(app)
