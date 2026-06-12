@@ -293,23 +293,53 @@ To provide accurate performance indicators, the library maintains a stability ga
 - Calculates high-accuracy **OS Displayed Time** (`displayedMs`), measuring process start (or content provider start) to first frame completion, matching the Android `I/ActivityTaskManager: Displayed` system diagnostic logs.
 - Captures **Draw Completion Activity Name** (`activityName`), helping consumers easily isolate and monitor distinct startup rates based on different activity entry paths.
 - Computes actual **P50, P90, and P99 percentiles** of TTFF dynamically past the threshold.
-- Reports metrics via a listener hook once the launch counts achieve calibration (e.g., `N = 100` consecutive faultless launches):
+- Exposes a `SharedFlow<StartupMetrics>` with `replay = 1`, so any late subscriber immediately receives the latest metrics!
+
+### Observing Metrics via SharedFlow
+
+Because `FrameReady.metricsFlow` is a `SharedFlow`, you can collect it from anywhere in your app—such as your `Application` class or main `Activity`.
+
+**Example 1: Collecting in your `Application` class**
+Since `Application` does not have a built-in lifecycle scope, create a simple coroutine scope to collect the flow:
 
 ```kotlin
-import kotlinx.coroutines.launch
+class MyApplication : Application() {
+    private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
-// Launch in a suitable coroutine scope (e.g. libraryScope or a ViewModel)
-libraryScope.launch {
-    FrameReady.metricsFlow.collect { metrics ->
-        // Forward P50/P99 times, cold-start rates, and activity-specific timings to custom collectors
-        FirebasePerformance.newTrace("cold_start_metrics").apply {
-            putMetric("ttff_p50", metrics.ttffP50)
-            putMetric("ttff_p99", metrics.ttffP99)
-            putMetric("net_improvement_percentage", metrics.netImprovementRate.toLong())
-            putMetric("cold_start_rate", metrics.coldStartRate.toLong())
-            putMetric("displayed_ms", metrics.displayedMs)
-            putAttribute("completed_activity", metrics.activityName)
-            stop()
+    override fun onCreate() {
+        super.onCreate()
+        
+        applicationScope.launch {
+            FrameReady.metricsFlow.collect { metrics ->
+                // Forward P50/P99 times, cold-start rates, and activity-specific timings to custom collectors
+                FirebasePerformance.newTrace("cold_start_metrics").apply {
+                    putMetric("ttff_p50", metrics.ttffP50)
+                    putMetric("ttff_p99", metrics.ttffP99)
+                    putMetric("net_improvement_percentage", metrics.netImprovementRate.toLong())
+                    putMetric("cold_start_rate", metrics.coldStartRate.toLong())
+                    putMetric("displayed_ms", metrics.displayedMs)
+                    putAttribute("completed_activity", metrics.activityName)
+                    stop()
+                }
+            }
+        }
+    }
+}
+```
+
+**Example 2: Collecting in your Main `Activity`**
+```kotlin
+class MainActivity : ComponentActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        
+        lifecycleScope.launch {
+            // lifecycle.repeatOnLifecycle is recommended for UI-bound collection
+            lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                FrameReady.metricsFlow.collect { metrics ->
+                    Log.d("Startup", "TTFF was ${metrics.displayedMs}ms")
+                }
+            }
         }
     }
 }
