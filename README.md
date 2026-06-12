@@ -18,6 +18,58 @@ While standard `androidx.startup` (App Startup) runs initializers **synchronousl
 
 ---
 
+## 🚀 Quick Start (3 Steps)
+
+### 1. Add Dependency
+Add JitPack to your root `build.gradle` or `settings.gradle`:
+```kotlin
+dependencyResolutionManagement {
+    repositories {
+        mavenCentral()
+        maven { url = uri("https://jitpack.io") }
+    }
+}
+```
+Add the dependency to your module:
+```kotlin
+dependencies {
+    implementation("com.github.frameready:frameready:1.0.0")
+}
+```
+
+### 2. Create an Initializer
+Implement `FrameReadyInitializer<T>` to define your background task:
+```kotlin
+class DatabaseInitializer : FrameReadyInitializer<String> {
+    override fun dependencies() = emptyList<Class<out FrameReadyInitializer<*>>>()
+    
+    // Runs on Dispatchers.IO automatically!
+    override fun executionThread() = ExecutionThread.BACKGROUND
+
+    override suspend fun create(context: Context): String {
+        // Run heavy SDK setups, DB migrations, or network calls here
+        return "Database Connected"
+    }
+}
+```
+
+### 3. Register in Manifest
+Add your initializer to the `AndroidManifest.xml` using the `FrameReadyProvider`. The library will automatically discover it and run it after the first frame!
+```xml
+<provider
+    android:name="com.frameready.FrameReadyProvider"
+    android:authorities="${applicationId}.frameready"
+    android:exported="false">
+    <meta-data
+        android:name="com.example.yourpkg.DatabaseInitializer"
+        android:value="post_frame_initializer" />
+</provider>
+```
+
+**That's it!** The task will now run *after* your users see the first frame, rather than blocking them on a white screen.
+
+---
+
 ## 📦 Traditional Startup vs. FrameReady Post-Frame Deferral
 
 Modern Android applications degrade in cold start speed due to progressive SDK accumulation (analytics, crash reporting, databases, and heavy cloud platforms). Comparing the traditional approach with `FrameReady` highlights the paradigm shift in performance, safety, and responsiveness:
