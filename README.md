@@ -75,8 +75,14 @@ Add your initializer to the `AndroidManifest.xml` using the `FrameReadyProvider`
 Using an AI coding assistant (like Gemini, ChatGPT, Claude, or Copilot)? Just copy and paste this prompt into your AI chat, and it will automatically migrate your App Startup code to FrameReady for you!
 
 ```text
-Please install the `com.github.narayan07feb:FrameReady:1.1.0` library in my Android project via JitPack. 
-Then, analyze my `Application.onCreate` and `androidx.startup` configurations. For any heavy or blocking SDKs (like databases, analytics, or network configs), migrate them into `FrameReadyInitializer` classes that execute on the `BACKGROUND` thread. Make sure to define dependencies using `List<Class<out FrameReadyInitializer<*>>>`. Finally, register the new initializers in my `AndroidManifest.xml` under the `FrameReadyProvider` so they run post-first-frame.
+I want to integrate the `com.github.narayan07feb:FrameReady:1.1.0` library into my Android project via JitPack.
+
+Please act as an interactive migration assistant. Before writing any code, ask me the following questions one by one:
+1. Which heavy SDKs or libraries in my `Application.onCreate` or `androidx.startup` configurations do you want to migrate to FrameReady?
+2. Do you want to collect FrameReady cold-start metrics?
+3. If yes, on which Activity would you like to collect and observe these metrics?
+
+Once I answer, analyze my code and generate the `FrameReadyInitializer` classes that execute on the `BACKGROUND` thread. Make sure to define dependencies using `List<Class<out FrameReadyInitializer<*>>>`. Finally, show me how to register the new initializers in my `AndroidManifest.xml` under the `FrameReadyProvider`, and how to collect the `FrameReady.metricsFlow` in my chosen Activity.
 ```
 
 ---
