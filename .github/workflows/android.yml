@@ -27,7 +27,7 @@ jobs:
       run: ./gradlew :frameready:assembleRelease --stacktrace
       
     - name: Run Library Unit Tests
-      run: ./gradlew :frameready:testReleaseUnitTest --stacktrace
+      run: ./gradlew :frameready:testDebugUnitTest --stacktrace
       
     - name: Verify Sample Compilation
       run: ./gradlew :sample-standard:assembleDebug --stacktrace
