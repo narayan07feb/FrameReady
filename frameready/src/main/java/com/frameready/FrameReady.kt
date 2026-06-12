@@ -24,6 +24,10 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.channels.BufferOverflow
 import java.lang.ref.WeakReference
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
@@ -77,7 +81,17 @@ object FrameReady {
     var contentProviderStartTime: Long = SystemClock.elapsedRealtime()
 
     private var sortedInitializers: List<Class<Any>>? = null
-    private var metricsListener: ((StartupMetrics) -> Unit)? = null
+
+    private val _metricsFlow = MutableSharedFlow<StartupMetrics>(
+        replay = 1,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST
+    )
+    
+    /**
+     * A reactive stream that emits the final metrics once the library stabilizes.
+     * Consumers can collect this flow without worrying about memory leaks or overwriting listeners.
+     */
+    val metricsFlow: SharedFlow<StartupMetrics> = _metricsFlow.asSharedFlow()
 
     private val isExecutingInUnitTest by lazy {
         runCatching { Class.forName("org.robolectric.Robolectric") }.isSuccess
@@ -113,19 +127,7 @@ object FrameReady {
         appOnCreateTime = SystemClock.elapsedRealtime()
     }
 
-    /**
-     * Sets a metrics listener that fires once the library stabilizes after [stableThreshold] successful launches.
-     */
-    fun setMetricsListener(listener: (StartupMetrics) -> Unit) {
-        this.metricsListener = listener
-    }
 
-    /**
-     * Clears the metrics listener to prevent memory leaks in case of Activity/View reference captures.
-     */
-    fun removeMetricsListener() {
-        this.metricsListener = null
-    }
 
     /**
      * Thread-safe cumulative manual/auto configuration entry point.
@@ -681,11 +683,9 @@ object FrameReady {
         val displayedLogName = activityName ?: "App"
         Log.i(TAG, "ActivityTaskManager [FrameReady-Logged]: Displayed $displayedLogName: +${completedMetrics.displayedMs}ms (coldStartRate: ${completedMetrics.coldStartRate}%)")
 
-        // Only report to listener if N stable launches is satisfied
+        // Only emit to flow if N stable launches is satisfied
         if (currentStableCount >= stableThreshold) {
-            handler.post {
-                metricsListener?.invoke(completedMetrics)
-            }
+            _metricsFlow.tryEmit(completedMetrics)
         }
     }
 

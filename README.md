@@ -290,16 +290,21 @@ To provide accurate performance indicators, the library maintains a stability ga
 - Reports metrics via a listener hook once the launch counts achieve calibration (e.g., `N = 100` consecutive faultless launches):
 
 ```kotlin
-FrameReady.setMetricsListener { metrics ->
-    // Forward P50/P99 times, cold-start rates, and activity-specific timings to custom collectors
-    FirebasePerformance.newTrace("cold_start_metrics").apply {
-        putMetric("ttff_p50", metrics.ttffP50)
-        putMetric("ttff_p99", metrics.ttffP99)
-        putMetric("net_improvement_percentage", metrics.netImprovementRate.toLong())
-        putMetric("cold_start_rate", metrics.coldStartRate.toLong())
-        putMetric("displayed_ms", metrics.displayedMs)
-        putAttribute("completed_activity", metrics.activityName)
-        stop()
+import kotlinx.coroutines.launch
+
+// Launch in a suitable coroutine scope (e.g. libraryScope or a ViewModel)
+libraryScope.launch {
+    FrameReady.metricsFlow.collect { metrics ->
+        // Forward P50/P99 times, cold-start rates, and activity-specific timings to custom collectors
+        FirebasePerformance.newTrace("cold_start_metrics").apply {
+            putMetric("ttff_p50", metrics.ttffP50)
+            putMetric("ttff_p99", metrics.ttffP99)
+            putMetric("net_improvement_percentage", metrics.netImprovementRate.toLong())
+            putMetric("cold_start_rate", metrics.coldStartRate.toLong())
+            putMetric("displayed_ms", metrics.displayedMs)
+            putAttribute("completed_activity", metrics.activityName)
+            stop()
+        }
     }
 }
 ```
