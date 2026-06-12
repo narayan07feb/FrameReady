@@ -9,6 +9,8 @@
         android:supportsRtl="true"
         android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
 
+        <profileable android:shell="true" />
+
         <activity
             android:name="com.example.samplestandard.StandardMainActivity"
             android:exported="true"
@@ -29,6 +31,9 @@
                 android:value="post_frame_initializer" />
             <meta-data
                 android:name="com.example.samplestandard.ConfigInitializer"
+                android:value="post_frame_initializer" />
+            <meta-data
+                android:name="com.example.samplestandard.NetworkCacheInitializer"
                 android:value="post_frame_initializer" />
         </provider>
 

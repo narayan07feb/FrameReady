@@ -316,7 +316,39 @@ object ProviderModule {
 
 ## 🛠 Setup & Installation
 
-### Option A: Zero-Config (Auto-Install)
+### Adding the Dependency
+
+**Option 1: JitPack (Easiest)**
+Since `FrameReady` uses standard Maven Publish configuration, you can immediately pull it via JitPack.
+Add JitPack to your `settings.gradle.kts` or root `build.gradle`:
+```kotlin
+dependencyResolutionManagement {
+    repositories {
+        mavenCentral()
+        maven { url = uri("https://jitpack.io") }
+    }
+}
+```
+Then add the dependency to your module:
+```kotlin
+dependencies {
+    implementation("com.github.frameready:frameready:1.0.0")
+}
+```
+
+**Option 2: Maven Central**
+FrameReady includes a fully configured `maven-publish` plugin. If the repository owner publishes to Sonatype Maven Central, you can use the standard coordinates:
+```kotlin
+dependencies {
+    implementation("com.frameready:frameready:1.0.0")
+}
+```
+
+---
+
+### Application Configuration
+
+#### Option A: Zero-Config (Auto-Install)
 
 Add the `FrameReadyProvider` tag into your `AndroidManifest.xml`. Declare your startup components inside nested `<meta-data>` nodes with `android:value="post_frame_initializer"`:
 

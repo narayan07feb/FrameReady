@@ -65,6 +65,7 @@ object FrameReady {
     // Result store
     private val resultMap = ConcurrentHashMap<Class<Any>, CompletableDeferred<Any?>>()
     private val initializers = ConcurrentHashMap.newKeySet<Class<Any>>()
+    private val initializerInstances = ConcurrentHashMap<Class<Any>, FrameReadyInitializer<Any?>>()
     
     private val isInstalled = AtomicBoolean(false)
     private val hasTriggered = AtomicBoolean(false)
@@ -192,6 +193,13 @@ object FrameReady {
         return resultMap.getOrPut(clazz) { CompletableDeferred() } as CompletableDeferred<T>
     }
 
+    @Suppress("UNCHECKED_CAST")
+    private fun getInstance(clazz: Class<Any>): FrameReadyInitializer<Any?> {
+        return initializerInstances.getOrPut(clazz) {
+            clazz.getDeclaredConstructor().newInstance() as FrameReadyInitializer<Any?>
+        }
+    }
+
     /**
      * Non-blocking getter. Returns matching value if ready, or null if pending.
      */
@@ -272,7 +280,7 @@ object FrameReady {
         fun scan(clazz: Class<Any>) {
             if (allNodes.add(clazz)) {
                 try {
-                    val instance = clazz.getDeclaredConstructor().newInstance() as FrameReadyInitializer<Any?>
+                    val instance = getInstance(clazz)
                     val deps = instance.dependencies()
                     for (dep in deps) {
                         @Suppress("UNCHECKED_CAST")
@@ -297,7 +305,7 @@ object FrameReady {
         // Build edges: dependency -> element (dependency runs first)
         allNodes.forEach { node ->
             try {
-                val instance = node.getDeclaredConstructor().newInstance() as FrameReadyInitializer<Any?>
+                val instance = getInstance(node)
                 instance.dependencies().forEach { dep ->
                     @Suppress("UNCHECKED_CAST")
                     val depClass = Class.forName(dep) as Class<Any>
@@ -551,8 +559,8 @@ object FrameReady {
                 launch {
                     val deferred = getDeferred<Any?>(clazz)
                     try {
-                        // Instantiate to find declared dependent nodes
-                        val instance = clazz.getDeclaredConstructor().newInstance() as FrameReadyInitializer<Any?>
+                        // Retrieve the cached instance
+                        val instance = getInstance(clazz)
                         
                         // Suspend-wait on all declared dependencies. If a dependency completes exceptionally,
                         // depDeferred.await() will throw, which is caught locally inside this try-catch.
@@ -697,6 +705,7 @@ object FrameReady {
     fun resetAllForTesting() {
         resultMap.clear()
         initializers.clear()
+        initializerInstances.clear()
         isInstalled.set(false)
         hasTriggered.set(false)
         activityMap.clear()

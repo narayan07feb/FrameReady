@@ -31,5 +31,6 @@ include(":sample-trampoline")
 include(":sample-notification")
 include(":sample-hilt")
 include(":sample-appstartup")
+include(":benchmark")
 
 
