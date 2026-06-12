@@ -64,9 +64,9 @@ afterEvaluate {
         publications {
             create<MavenPublication>("release") {
                 from(components["release"])
-                groupId = "com.github.frameready" // Relatable repository for JitPack / Maven Central open source
-                artifactId = "frameready"
-                version = "1.0.0"
+                groupId = "com.github.narayan07feb"
+                artifactId = "FrameReady"
+                version = "1.1.0"
             }
         }
     }
