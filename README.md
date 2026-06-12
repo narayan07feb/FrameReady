@@ -70,6 +70,17 @@ Add your initializer to the `AndroidManifest.xml` using the `FrameReadyProvider`
 
 ---
 
+## 🤖 AI Copilot Prompt (Auto-Install)
+
+Using an AI coding assistant like GitHub Copilot, Cursor, or Gemini? Just copy and paste this prompt into your AI chat, and it will automatically migrate your App Startup code to FrameReady for you!
+
+```text
+Please install the `com.github.frameready:frameready:1.0.0` library in my Android project via JitPack. 
+Then, analyze my `Application.onCreate` and `androidx.startup` configurations. For any heavy or blocking SDKs (like databases, analytics, or network configs), migrate them into `FrameReadyInitializer` classes that execute on the `BACKGROUND` thread. Finally, register the new initializers in my `AndroidManifest.xml` under the `FrameReadyProvider` so they run post-first-frame.
+```
+
+---
+
 ## 📦 Traditional Startup vs. FrameReady Post-Frame Deferral
 
 Modern Android applications degrade in cold start speed due to progressive SDK accumulation (analytics, crash reporting, databases, and heavy cloud platforms). Comparing the traditional approach with `FrameReady` highlights the paradigm shift in performance, safety, and responsiveness:
