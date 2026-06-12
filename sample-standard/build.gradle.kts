@@ -23,7 +23,6 @@ android {
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
     }
     debug {
-      // Gradle will automatically use its default ~/.android/debug.keystore
     }
   }
   compileOptions {

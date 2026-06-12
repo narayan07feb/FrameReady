@@ -18,15 +18,6 @@ android {
     versionName = "1.0"
   }
 
-  signingConfigs {
-    create("debugConfig") {
-      storeFile = file("${rootDir}/debug.keystore")
-      storePassword = "android"
-      keyAlias = "androiddebugkey"
-      keyPassword = "android"
-    }
-  }
-
   buildTypes {
     release {
       isCrunchPngs = false
@@ -34,7 +25,6 @@ android {
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
     }
     debug {
-      signingConfig = signingConfigs.getByName("debugConfig")
     }
   }
   compileOptions {
