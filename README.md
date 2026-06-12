@@ -33,7 +33,7 @@ dependencyResolutionManagement {
 Add the dependency to your module:
 ```kotlin
 dependencies {
-    implementation("com.github.frameready:frameready:1.0.0")
+    implementation("com.github.narayan07feb:FrameReady:1.0.0")
 }
 ```
 
@@ -75,7 +75,7 @@ Add your initializer to the `AndroidManifest.xml` using the `FrameReadyProvider`
 Using an AI coding assistant (like Gemini, ChatGPT, Claude, or Copilot)? Just copy and paste this prompt into your AI chat, and it will automatically migrate your App Startup code to FrameReady for you!
 
 ```text
-Please install the `com.github.frameready:frameready:1.0.0` library in my Android project via JitPack. 
+Please install the `com.github.narayan07feb:FrameReady:1.0.0` library in my Android project via JitPack. 
 Then, analyze my `Application.onCreate` and `androidx.startup` configurations. For any heavy or blocking SDKs (like databases, analytics, or network configs), migrate them into `FrameReadyInitializer` classes that execute on the `BACKGROUND` thread. Finally, register the new initializers in my `AndroidManifest.xml` under the `FrameReadyProvider` so they run post-first-frame.
 ```
 
