@@ -1,0 +1,48 @@
+name: Bug Report
+description: Create a report to help us improve FrameReady
+title: "[BUG] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to fill out this bug report! Please fill in as much information as possible to help us reproduce the issue.
+  - type: input
+    id: frameready-version
+    attributes:
+      label: FrameReady Version
+      description: What version of FrameReady are you using? (e.g. v1.0.0)
+      placeholder: v1.0.0
+    validations:
+      required: true
+  - type: input
+    id: android-version
+    attributes:
+      label: Android OS Version & Device
+      description: What device and Android version did this occur on? (e.g. Pixel 6, Android 13)
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: A clear and concise description of what the bug is.
+    validations:
+      required: true
+  - type: textarea
+    id: steps-to-reproduce
+    attributes:
+      label: Steps to Reproduce
+      description: How can we trigger this bug?
+      placeholder: |
+        1. Install FrameReady with version X
+        2. Create a FrameReadyInitializer that does Y
+        3. See crash Z
+    validations:
+      required: true
+  - type: textarea
+    id: stacktrace
+    attributes:
+      label: Stacktrace
+      description: If the app crashed, paste the stacktrace here.
+      render: java
