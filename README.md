@@ -75,7 +75,7 @@ Add your initializer to the `AndroidManifest.xml` using the `FrameReadyProvider`
 Using an AI coding assistant (like Gemini, ChatGPT, Claude, or Copilot)? Just copy and paste this prompt into your AI chat, and it will automatically migrate your App Startup code to FrameReady for you!
 
 ```text
-I want to integrate the `com.github.narayan07feb:FrameReady:1.1.0` library into my Android project via JitPack.
+I want to integrate the `com.github.narayan07feb:FrameReady:<LATEST_VERSION>` library into my Android project via JitPack.
 
 Please act as an interactive migration assistant. Before writing any code, ask me the following questions one by one:
 1. Which heavy SDKs or libraries in my `Application.onCreate` or `androidx.startup` configurations do you want to migrate to FrameReady?
