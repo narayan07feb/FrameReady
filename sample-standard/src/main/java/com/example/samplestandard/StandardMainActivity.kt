@@ -23,6 +23,7 @@ import com.frameready.FrameReady
 import com.frameready.FrameReadyInitializer
 import com.frameready.StartupMetrics
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 class DatabaseInitializer : FrameReadyInitializer<String> {
     override suspend fun create(context: android.content.Context): String {
@@ -30,7 +31,7 @@ class DatabaseInitializer : FrameReadyInitializer<String> {
         return "SQLite_Local_V1_OK"
     }
 
-    override fun dependencies(): List<String> = emptyList()
+    override fun dependencies(): List<Class<out FrameReadyInitializer<*>>> = emptyList()
 }
 
 class ConfigInitializer : FrameReadyInitializer<Map<String, String>> {
@@ -39,7 +40,7 @@ class ConfigInitializer : FrameReadyInitializer<Map<String, String>> {
         return mapOf("env" to "production", "logLevel" to "DEBUG")
     }
 
-    override fun dependencies(): List<String> = emptyList()
+    override fun dependencies(): List<Class<out FrameReadyInitializer<*>>> = emptyList()
 }
 
 class NetworkCacheInitializer : FrameReadyInitializer<String> {
@@ -49,9 +50,9 @@ class NetworkCacheInitializer : FrameReadyInitializer<String> {
         return "Cache Ready [Env: ${config?.get("env")}]"
     }
 
-    override fun dependencies(): List<String> = listOf(
-        "com.example.samplestandard.DatabaseInitializer",
-        "com.example.samplestandard.ConfigInitializer"
+    override fun dependencies(): List<Class<out FrameReadyInitializer<*>>> = listOf(
+        DatabaseInitializer::class.java,
+        ConfigInitializer::class.java
     )
 }
 
@@ -95,8 +96,10 @@ fun StandardSampleScreen(initMode: String) {
     var benchmarkMetrics by remember { mutableStateOf<StartupMetrics?>(null) }
 
     LaunchedEffect(Unit) {
-        FrameReady.setMetricsListener { metrics ->
-            benchmarkMetrics = metrics
+        launch {
+            FrameReady.metricsFlow.collect { metrics ->
+                benchmarkMetrics = metrics
+            }
         }
         
         val startTime = System.currentTimeMillis()

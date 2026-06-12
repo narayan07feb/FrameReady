@@ -41,12 +41,12 @@ class FrameReadyTest {
     // --- TEST INITIALIZERS ---
 
     class TestInitA : FrameReadyInitializer<String> {
-        override fun dependencies(): List<String> = emptyList()
+        override fun dependencies(): List<Class<out FrameReadyInitializer<*>>> = emptyList()
         override suspend fun create(context: Context): String = "Result_A"
     }
 
     class TestInitB : FrameReadyInitializer<String> {
-        override fun dependencies(): List<String> = listOf(TestInitA::class.java.name)
+        override fun dependencies(): List<Class<out FrameReadyInitializer<*>>> = listOf(TestInitA::class.java)
         override suspend fun create(context: Context): String {
             val a = FrameReady.getOrNull(TestInitA::class.java) ?: "Null_A"
             return "Result_B_with_$a"
@@ -54,7 +54,7 @@ class FrameReadyTest {
     }
 
     class TestInitC : FrameReadyInitializer<String> {
-        override fun dependencies(): List<String> = listOf(TestInitB::class.java.name)
+        override fun dependencies(): List<Class<out FrameReadyInitializer<*>>> = listOf(TestInitB::class.java)
         override suspend fun create(context: Context): String {
             val b = FrameReady.getOrNull(TestInitB::class.java) ?: "Null_B"
             return "Result_C_with_$b"
@@ -64,19 +64,19 @@ class FrameReadyTest {
     // --- CIRCULAR TESTS ---
 
     class CircularA : FrameReadyInitializer<String> {
-        override fun dependencies(): List<String> = listOf(CircularB::class.java.name)
+        override fun dependencies(): List<Class<out FrameReadyInitializer<*>>> = listOf(CircularB::class.java)
         override suspend fun create(context: Context): String = "A"
     }
 
     class CircularB : FrameReadyInitializer<String> {
-        override fun dependencies(): List<String> = listOf(CircularA::class.java.name)
+        override fun dependencies(): List<Class<out FrameReadyInitializer<*>>> = listOf(CircularA::class.java)
         override suspend fun create(context: Context): String = "B"
     }
 
     // --- FAILING INITIALIZER ---
 
     class FailingInit : FrameReadyInitializer<String> {
-        override fun dependencies(): List<String> = emptyList()
+        override fun dependencies(): List<Class<out FrameReadyInitializer<*>>> = emptyList()
         override suspend fun create(context: Context): String {
             throw RuntimeException("Simulated Failure")
         }
@@ -85,7 +85,7 @@ class FrameReadyTest {
     // --- SLOW INITIALIZER ---
 
     class SlowInit : FrameReadyInitializer<String> {
-        override fun dependencies(): List<String> = emptyList()
+        override fun dependencies(): List<Class<out FrameReadyInitializer<*>>> = emptyList()
         override suspend fun create(context: Context): String {
             kotlinx.coroutines.delay(1000)
             return "Done"
@@ -97,7 +97,7 @@ class FrameReadyTest {
             val wasInterrupted = java.util.concurrent.atomic.AtomicBoolean(false)
         }
 
-        override fun dependencies(): List<String> = emptyList()
+        override fun dependencies(): List<Class<out FrameReadyInitializer<*>>> = emptyList()
         override fun executionThread() = ExecutionThread.BACKGROUND
         override fun timeoutMs() = 400L // 400ms timeout
 

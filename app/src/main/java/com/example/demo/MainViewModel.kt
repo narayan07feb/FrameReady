@@ -40,8 +40,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         testEarlyAwait()
         
         // 2. Metrics Hook Setup
-        FrameReady.setMetricsListener { metrics ->
-            _uiState.update { it.copy(startupMetrics = metrics, metricsCallbackFired = true) }
+        viewModelScope.launch {
+            FrameReady.metricsFlow.collect { metrics ->
+                _uiState.update { it.copy(startupMetrics = metrics, metricsCallbackFired = true) }
+            }
         }
     }
 
@@ -195,7 +197,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     override fun onCleared() {
         super.onCleared()
-        // Prevent memory leak by removing the metrics listener in the singleton FrameReady instance
-        FrameReady.removeMetricsListener()
+        // SharedFlow safely prevents memory leaks, no cleanup necessary
+
     }
 }

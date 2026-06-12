@@ -83,7 +83,7 @@ class DelayedFeatureInitializer : FrameReadyInitializer<String> {
         return "Core_Engine_Boot_Successfully"
     }
 
-    override fun dependencies(): List<String> = emptyList()
+    override fun dependencies(): List<Class<out FrameReadyInitializer<*>>> = emptyList()
 }
 
 // 3. Real Target Activity (after the Splash Trampoline)

@@ -29,7 +29,7 @@ class NotificationFastInitializer : FrameReadyInitializer<String> {
         return "Route_Telemetry_Active"
     }
 
-    override fun dependencies(): List<String> = emptyList()
+    override fun dependencies(): List<Class<out FrameReadyInitializer<*>>> = emptyList()
 }
 
 // 2. Main Launcher Dashboard

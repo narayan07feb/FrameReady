@@ -286,7 +286,7 @@ object FrameReady {
                     val deps = instance.dependencies()
                     for (dep in deps) {
                         @Suppress("UNCHECKED_CAST")
-                        val depClass = Class.forName(dep) as Class<Any>
+                        val depClass = dep as Class<Any>
                         scan(depClass)
                     }
                 } catch (e: Exception) {
@@ -310,7 +310,7 @@ object FrameReady {
                 val instance = getInstance(node)
                 instance.dependencies().forEach { dep ->
                     @Suppress("UNCHECKED_CAST")
-                    val depClass = Class.forName(dep) as Class<Any>
+                    val depClass = dep as Class<Any>
                     adjacencyList[depClass]?.add(node)
                     inDegree[node] = (inDegree[node] ?: 0) + 1
                 }
@@ -568,7 +568,7 @@ object FrameReady {
                         // depDeferred.await() will throw, which is caught locally inside this try-catch.
                         instance.dependencies().forEach { dep ->
                             @Suppress("UNCHECKED_CAST")
-                            val depClass = Class.forName(dep) as Class<Any>
+                            val depClass = dep as Class<Any>
                             val depDeferred = getDeferred<Any?>(depClass)
                             depDeferred.await()
                         }

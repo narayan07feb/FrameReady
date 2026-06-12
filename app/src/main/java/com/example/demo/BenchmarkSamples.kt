@@ -67,7 +67,7 @@ class SampleAndroidXStartupApproach : Initializer<String> {
  */
 class SampleFrameReadyApproach : FrameReadyInitializer<String> {
     
-    override fun dependencies(): List<String> {
+    override fun dependencies(): List<Class<out FrameReadyInitializer<*>>> {
         return emptyList()
     }
 
@@ -102,7 +102,7 @@ class SampleFrameReadyApproach : FrameReadyInitializer<String> {
  */
 class SampleBlockingInterruptOnTimeoutApproach : FrameReadyInitializer<String> {
     
-    override fun dependencies(): List<String> {
+    override fun dependencies(): List<Class<out FrameReadyInitializer<*>>> {
         return emptyList()
     }
 

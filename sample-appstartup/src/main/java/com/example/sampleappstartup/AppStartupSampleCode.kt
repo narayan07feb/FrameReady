@@ -69,7 +69,7 @@ class PostFrameTaskInitializer : FrameReadyInitializer<Unit> {
         AppStartupNotifier.log("[FrameReady] Post-Frame asynchronous services are fully warm!")
     }
 
-    override fun dependencies(): List<String> = emptyList()
+    override fun dependencies(): List<Class<out FrameReadyInitializer<*>>> = emptyList()
 }
 
 // 4. View Model coordinating statuses

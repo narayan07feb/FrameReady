@@ -104,7 +104,7 @@ class HiltPostFrameModuleInitializer : FrameReadyInitializer<EncryptedSecretStor
         return storage
     }
 
-    override fun dependencies(): List<String> = emptyList()
+    override fun dependencies(): List<Class<out FrameReadyInitializer<*>>> = emptyList()
 }
 
 // 5.1 Custom provider interface to avoid issues with raw Kotlin function types with continuation in KSP / Hilt

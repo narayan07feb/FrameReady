@@ -30,7 +30,7 @@ interface FrameReadyInitializer<T> {
     /**
      * Declares the list of dependencies that must complete initialization before this initializer starts.
      */
-    fun dependencies(): List<String>
+    fun dependencies(): List<Class<out FrameReadyInitializer<*>>>
 
     /**
      * Declares the execution thread (defaults to BACKGROUND).

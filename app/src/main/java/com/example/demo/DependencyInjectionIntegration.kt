@@ -48,7 +48,7 @@ object SampleKoinModules {
  */
 class KoinFrameReadyInitializer : FrameReadyInitializer<Boolean> {
     
-    override fun dependencies(): List<String> {
+    override fun dependencies(): List<Class<out FrameReadyInitializer<*>>> {
         return emptyList()
     }
 
@@ -180,7 +180,7 @@ object HiltDatabaseModule {
  */
 class DatabaseFrameReadyInitializer : FrameReadyInitializer<Any> {
     
-    override fun dependencies(): List<String> {
+    override fun dependencies(): List<Class<out FrameReadyInitializer<*>>> {
         return emptyList()
     }
 
