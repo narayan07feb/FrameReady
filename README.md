@@ -33,7 +33,7 @@ dependencyResolutionManagement {
 Add the dependency to your module:
 ```kotlin
 dependencies {
-    implementation("com.github.narayan07feb:FrameReady:1.1.4")
+    implementation("com.github.narayan07feb:FrameReady:1.1.6")
 }
 ```
 
@@ -351,9 +351,13 @@ The `metricsFlow` emits a comprehensive `StartupMetrics` payload. Here is a brea
 
 * **`displayedMs`**: The total elapsed time starting from the moment the Android OS originally forked the application process. On supported devices (API 24+), FrameReady automatically absorbs the pre-boot OS overhead into this metric. This closely mirrors the official `ActivityTaskManager: Displayed` OS log.
 * **`ttffMs`**: The internal Time-to-First-Frame (TTFF) measured from `Application.onCreate` to the moment your Activity drew its first frame.
+* **`activityName`**: The specific Activity that triggered the final rendering completion. If your Splash Screen redirects to a Home Screen or Settings Screen, `activityName` tells you precisely which destination caused the telemetry emission.
+
+> [!NOTE]
+> The following historical fields require **local persistence** to calculate. By default, `FrameReady` disables local persistence to minimize storage footprint. To enable historical medians, set `FrameReady.isPersistenceEnabled = true` before calling `install()`.
+
 * **`coldStartRate`**: A percentage (`Double`) representing how many of the app's total historical launches were true OS "Cold Starts" (e.g., `100.0` = 100%).
 * **`stableLaunchCount`**: The number of consecutive, crash-free launches your application has completed. If the app crashes during boot, FrameReady intercepts the failure and resets this to `0`. FrameReady uses this internally to pause emitting `P50` averages until a `stableThreshold` is met (default: 100). 
-* **`activityName`**: The specific Activity that triggered the final rendering completion. If your Splash Screen redirects to a Home Screen or Settings Screen, `activityName` tells you precisely which destination caused the telemetry emission.
 * **`ttffP50` / `ttffP90` / `ttffP99`**: The historically maintained percentiles (Median, 90th, 99th) of your startup times, calculated dynamically based on stable historical data.
 
 ---
@@ -455,7 +459,7 @@ dependencies {
 FrameReady includes a fully configured `maven-publish` plugin. If the repository owner publishes to Sonatype Maven Central, you can use the standard coordinates:
 ```kotlin
 dependencies {
-    implementation("com.frameready:frameready:1.1.4")
+    implementation("com.frameready:frameready:1.1.6")
 }
 ```
 
@@ -508,9 +512,10 @@ De-register the manifest providers and install manually inside your custom `Appl
 ```kotlin
 class MyApplication : Application() {
     override fun onCreate() {
-        super.onCreate()
+        FrameReady.isPersistenceEnabled = false // Default is false to minimize footprint
+        FrameReady.baselineTtffMs = 500L
         FrameReady.install(this, listOf(
-            AInitializer::class.java,
+            DatabaseInitializer::class.java,
             BInitializer::class.java
         ))
     }

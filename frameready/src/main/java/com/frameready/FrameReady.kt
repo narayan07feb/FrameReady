@@ -109,8 +109,15 @@ object FrameReady {
     }
     
     // Configurable thresholds for testing/open-source adoption
-    var baselineTtffMs: Long = 350L
     var stableThreshold: Int = DEFAULT_STABLE_THRESHOLD
+    var baselineTtffMs: Long = 0L
+
+    /**
+     * Determines whether FrameReady should store metric history in local SharedPreferences.
+     * When disabled, historical percentile medians (e.g. P50/P90), cold start rates, and 
+     * stability count will fall back to default values.
+     */
+    var isPersistenceEnabled: Boolean = false
 
     // Dynamic/Configurable Trampoline overrides
     var trampolineThresholdMs: Long = 500L
@@ -153,14 +160,16 @@ object FrameReady {
         globalAppContext = appContext
 
         if (coldLaunchCounted.compareAndSet(false, true)) {
-            libraryScope.launch(Dispatchers.IO) {
-                val prefs = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                val coldCount = prefs.getInt(KEY_COLD_LAUNCHES, 0) + 1
-                val totalCount = prefs.getInt(KEY_TOTAL_LAUNCHES, 0) + 1
-                prefs.edit()
-                    .putInt(KEY_COLD_LAUNCHES, coldCount)
-                    .putInt(KEY_TOTAL_LAUNCHES, totalCount)
-                    .apply()
+            if (isPersistenceEnabled) {
+                libraryScope.launch(Dispatchers.IO) {
+                    val prefs = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                    val coldCount = prefs.getInt(KEY_COLD_LAUNCHES, 0) + 1
+                    val totalCount = prefs.getInt(KEY_TOTAL_LAUNCHES, 0) + 1
+                    prefs.edit()
+                        .putInt(KEY_COLD_LAUNCHES, coldCount)
+                        .putInt(KEY_TOTAL_LAUNCHES, totalCount)
+                        .apply()
+                }
             }
         }
 
@@ -270,7 +279,8 @@ object FrameReady {
      * Resets the stability count inside SharedPreferences.
      */
     @VisibleForTesting
-    internal fun resetStabilityCount(context: Context) {
+    fun resetStability(context: Context) {
+        if (!isPersistenceEnabled) return
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         prefs.edit()
             .putInt(KEY_STABLE_COUNT, 0)
@@ -368,11 +378,13 @@ object FrameReady {
             override fun onActivityStarted(activity: Activity) {
                 val count = activeActivitiesCount.incrementAndGet()
                 if (count == 1) {
-                    if (!firstActivityStartedInProcess.compareAndSet(false, true)) {
-                        libraryScope.launch(Dispatchers.IO) {
-                            val prefs = activity.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                            val totalCount = prefs.getInt(KEY_TOTAL_LAUNCHES, 0) + 1
-                            prefs.edit().putInt(KEY_TOTAL_LAUNCHES, totalCount).apply()
+                    if (firstActivityStartedInProcess.compareAndSet(false, true)) {
+                        if (isPersistenceEnabled) {
+                            libraryScope.launch(Dispatchers.IO) {
+                                val prefs = activity.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                                val totalCount = prefs.getInt(KEY_TOTAL_LAUNCHES, 0) + 1
+                                prefs.edit().putInt(KEY_TOTAL_LAUNCHES, totalCount).apply()
+                            }
                         }
                     }
                 }
@@ -648,6 +660,30 @@ object FrameReady {
     }
 
     private fun handleStartupSuccess(context: Context, partialMetrics: StartupMetrics, activityName: String?) {
+        val displayedLogName = activityName ?: "App"
+
+        // Calculate improvement against baseline
+        // Formula: (baselineTTFF - libraryTTFF) / baselineTTFF * 100
+        val netImprovement = if (baselineTtffMs > 0) {
+            ((baselineTtffMs - partialMetrics.ttffMs).toDouble() / baselineTtffMs.toDouble()) * 100.0
+        } else {
+            0.0
+        }
+
+        if (!isPersistenceEnabled) {
+            val defaultMetrics = partialMetrics.copy(
+                stableLaunchCount = 1,
+                ttffP50 = 0L,
+                ttffP90 = 0L,
+                ttffP99 = 0L,
+                netImprovementRate = netImprovement,
+                coldStartRate = 100.0
+            )
+            Log.i(TAG, "ActivityTaskManager [FrameReady-Logged]: Displayed $displayedLogName: +${defaultMetrics.displayedMs}ms")
+            _metricsFlow.tryEmit(defaultMetrics)
+            return
+        }
+
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val currentStableCount = prefs.getInt(KEY_STABLE_COUNT, 0) + 1
         
@@ -670,14 +706,6 @@ object FrameReady {
         val p90 = if (size > 0) sortedHistory[(size * 0.9).toInt().coerceAtMost(size - 1)] else partialMetrics.ttffMs
         val p99 = if (size > 0) sortedHistory[(size * 0.99).toInt().coerceAtMost(size - 1)] else partialMetrics.ttffMs
 
-        // Calculate improvement against baseline
-        // Formula: (baselineTTFF - libraryTTFF) / baselineTTFF * 100
-        val netImprovement = if (baselineTtffMs > 0) {
-            ((baselineTtffMs - partialMetrics.ttffMs).toDouble() / baselineTtffMs.toDouble()) * 100.0
-        } else {
-            0.0
-        }
-
         val coldCount = prefs.getInt(KEY_COLD_LAUNCHES, 1)
         val totalCount = prefs.getInt(KEY_TOTAL_LAUNCHES, 1).coerceAtLeast(coldCount)
         val computedColdStartRate = (coldCount.toDouble() / totalCount.toDouble()) * 100.0
@@ -691,7 +719,6 @@ object FrameReady {
             coldStartRate = computedColdStartRate
         )
 
-        val displayedLogName = activityName ?: "App"
         Log.i(TAG, "ActivityTaskManager [FrameReady-Logged]: Displayed $displayedLogName: +${completedMetrics.displayedMs}ms (coldStartRate: ${completedMetrics.coldStartRate}%)")
 
         // Only emit to flow if N stable launches is satisfied
@@ -701,7 +728,9 @@ object FrameReady {
     }
 
     private fun handleStartupFailure(t: Throwable, componentName: String) {
-        Log.e(TAG, "Initialization failure triggered stability counter reset. Failed element: $componentName", t)
+        Log.e(TAG, "Initialization failure. Failed element: $componentName", t)
+        if (!isPersistenceEnabled) return
+        
         // Reset count to zero
         val ctx = globalAppContext ?: activityMap.keys.firstOrNull()
         if (ctx != null) {
