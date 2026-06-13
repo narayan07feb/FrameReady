@@ -1,6 +1,7 @@
 package com.example.samplestandard
 
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
@@ -19,6 +20,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.lifecycleScope
 import com.frameready.FrameReady
 import com.frameready.FrameReadyInitializer
 import com.frameready.StartupMetrics
@@ -59,11 +61,11 @@ class NetworkCacheInitializer : FrameReadyInitializer<String> {
 class StandardMainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        
+
         FrameReady.stableThreshold = 1
-        
+
         val initMode = intent.getStringExtra("INIT_MODE") ?: "frameready"
-        
+
         // --- MACROBENCHMARK SIMULATION ---
         // If the macrobenchmark runner passes traditional or appstartup mode,
         // we deliberately block the main thread to simulate those architectures.
@@ -75,8 +77,20 @@ class StandardMainActivity : ComponentActivity() {
                 // Ignore
             }
         }
-        
-        setContent {
+        lifecycleScope.launch {
+            FrameReady.metricsFlow.collect {
+                println("FrameReady Metrics: $it")
+            }
+        }
+        val processStart = android.os.Process.getStartUptimeMillis()
+        val current = android.os.SystemClock.uptimeMillis()
+        val osOverhead = current - processStart
+
+        Log.e(
+            "Validation",
+            "The OS spent ${osOverhead}ms booting up before Application.onCreate() even ran!"
+        )
+        setContent{
             StandardSampleScreen(initMode)
         }
     }
@@ -88,11 +102,11 @@ fun StandardSampleScreen(initMode: String) {
     var dbStatus by remember { mutableStateOf("Initializing Database... (Post-Frame)") }
     var configStatus by remember { mutableStateOf("Loading Config... (Post-Frame)") }
     var networkStatus by remember { mutableStateOf("Waiting for Dependencies... (Topological Sort)") }
-    
+
     var isDbReady by remember { mutableStateOf(false) }
     var isConfigReady by remember { mutableStateOf(false) }
     var isNetworkReady by remember { mutableStateOf(false) }
-    
+
     var benchmarkMetrics by remember { mutableStateOf<StartupMetrics?>(null) }
 
     LaunchedEffect(Unit) {
@@ -101,9 +115,9 @@ fun StandardSampleScreen(initMode: String) {
                 benchmarkMetrics = metrics
             }
         }
-        
+
         val startTime = System.currentTimeMillis()
-        
+
         try {
             val dbResult = FrameReady.await(DatabaseInitializer::class.java)
             val dbDelay = System.currentTimeMillis() - startTime
@@ -121,7 +135,7 @@ fun StandardSampleScreen(initMode: String) {
         } catch (e: Exception) {
             configStatus = "Config Initializer Failed"
         }
-        
+
         try {
             val netResult = FrameReady.await(NetworkCacheInitializer::class.java)
             val netDelay = System.currentTimeMillis() - startTime
@@ -137,7 +151,7 @@ fun StandardSampleScreen(initMode: String) {
         "appstartup" -> "App Startup (Blocked Main Thread)"
         else -> "FrameReady (Deferred Concurrent)"
     }
-    
+
     val modeColor = when (initMode) {
         "frameready" -> Color(0xFF81C784)
         else -> Color(0xFFE57373)
@@ -171,7 +185,7 @@ fun StandardSampleScreen(initMode: String) {
                 verticalArrangement = Arrangement.spacedBy(16.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                
+
                 // Active Mode Banner
                 Card(
                     modifier = Modifier.fillMaxWidth(),
@@ -190,12 +204,21 @@ fun StandardSampleScreen(initMode: String) {
                         )
                         Spacer(modifier = Modifier.width(16.dp))
                         Column {
-                            Text("Active Benchmark Mode:", color = Color.White.copy(alpha = 0.7f), fontSize = 12.sp)
-                            Text(modeTitle, color = modeColor, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                            Text(
+                                "Active Benchmark Mode:",
+                                color = Color.White.copy(alpha = 0.7f),
+                                fontSize = 12.sp
+                            )
+                            Text(
+                                modeTitle,
+                                color = modeColor,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 16.sp
+                            )
                         }
                     }
                 }
-                
+
                 // Benchmark Telemetry Panel
                 Text(
                     text = "Benchmark Telemetry",
@@ -204,7 +227,7 @@ fun StandardSampleScreen(initMode: String) {
                     color = Color.White,
                     modifier = Modifier.align(Alignment.Start)
                 )
-                
+
                 if (benchmarkMetrics != null) {
                     val m = benchmarkMetrics!!
                     Card(
@@ -212,13 +235,38 @@ fun StandardSampleScreen(initMode: String) {
                         colors = CardDefaults.cardColors(containerColor = Color(0xFF311B92)),
                         shape = RoundedCornerShape(12.dp)
                     ) {
-                        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text("⚡ Cold Start Improvement: +${String.format("%.1f", m.netImprovementRate)}%", fontWeight = FontWeight.Bold, color = Color(0xFFB39DDB), fontSize = 16.sp)
+                        Column(
+                            modifier = Modifier.padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                "⚡ Cold Start Improvement: +${
+                                    String.format(
+                                        "%.1f",
+                                        m.netImprovementRate
+                                    )
+                                }%",
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFFB39DDB),
+                                fontSize = 16.sp
+                            )
                             HorizontalDivider(color = Color.White.copy(alpha = 0.2f))
-                            MetricRow("TTFF (Time to First Frame):", "${m.ttffMs} ms", Color(0xFF81C784))
+                            MetricRow(
+                                "TTFF (Time to First Frame):",
+                                "${m.ttffMs} ms",
+                                Color(0xFF81C784)
+                            )
                             MetricRow("P50 TTFF:", "${m.ttffP50} ms", Color.White)
-                            MetricRow("Total Initializers Resolved:", "${m.initializerCount}", Color.White)
-                            MetricRow("Concurrent Background Work:", "${m.initCompleteMs} ms", Color(0xFFFFB74D))
+                            MetricRow(
+                                "Total Initializers Resolved:",
+                                "${m.initializerCount}",
+                                Color.White
+                            )
+                            MetricRow(
+                                "Concurrent Background Work:",
+                                "${m.initCompleteMs} ms",
+                                Color(0xFFFFB74D)
+                            )
                         }
                     }
                 } else {
@@ -227,8 +275,15 @@ fun StandardSampleScreen(initMode: String) {
                         colors = CardDefaults.cardColors(containerColor = Color(0xFF263238)),
                         shape = RoundedCornerShape(12.dp)
                     ) {
-                        Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                            CircularProgressIndicator(modifier = Modifier.size(20.dp), color = Color.White, strokeWidth = 2.dp)
+                        Row(
+                            modifier = Modifier.padding(16.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(20.dp),
+                                color = Color.White,
+                                strokeWidth = 2.dp
+                            )
                             Spacer(modifier = Modifier.width(16.dp))
                             Text("Calculating benchmarks...", color = Color.White, fontSize = 14.sp)
                         }
