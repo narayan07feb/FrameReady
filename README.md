@@ -33,7 +33,7 @@ dependencyResolutionManagement {
 Add the dependency to your module:
 ```kotlin
 dependencies {
-    implementation("com.github.narayan07feb:FrameReady:1.1.6")
+    implementation("com.github.narayan07feb:FrameReady:1.1.7")
 }
 ```
 
@@ -354,7 +354,7 @@ The `metricsFlow` emits a comprehensive `StartupMetrics` payload. Here is a brea
 * **`activityName`**: The specific Activity that triggered the final rendering completion. If your Splash Screen redirects to a Home Screen or Settings Screen, `activityName` tells you precisely which destination caused the telemetry emission.
 
 > [!NOTE]
-> The following historical fields require **local persistence** to calculate. By default, `FrameReady` disables local persistence to minimize storage footprint. To enable historical medians, set `FrameReady.isPersistenceEnabled = true` before calling `install()`.
+> The following historical fields require **local persistence** to calculate. By default, FrameReady does not store any data locally, and these fields will emit default values. To enable historical medians, implement `FrameReadyStorage` and set `FrameReady.storage = yourImplementation` before calling `install()`.
 
 * **`coldStartRate`**: A percentage (`Double`) representing how many of the app's total historical launches were true OS "Cold Starts" (e.g., `100.0` = 100%).
 * **`stableLaunchCount`**: The number of consecutive, crash-free launches your application has completed. If the app crashes during boot, FrameReady intercepts the failure and resets this to `0`. FrameReady uses this internally to pause emitting `P50` averages until a `stableThreshold` is met (default: 100). 
@@ -451,7 +451,7 @@ dependencyResolutionManagement {
 Then add the dependency to your module:
 ```kotlin
 dependencies {
-    implementation("com.github.narayan07feb:FrameReady:1.1.4")
+    implementation("com.github.narayan07feb:FrameReady:1.1.7")
 }
 ```
 
@@ -459,7 +459,7 @@ dependencies {
 FrameReady includes a fully configured `maven-publish` plugin. If the repository owner publishes to Sonatype Maven Central, you can use the standard coordinates:
 ```kotlin
 dependencies {
-    implementation("com.frameready:frameready:1.1.6")
+    implementation("com.frameready:frameready:1.1.7")
 }
 ```
 
@@ -512,8 +512,11 @@ De-register the manifest providers and install manually inside your custom `Appl
 ```kotlin
 class MyApplication : Application() {
     override fun onCreate() {
-        FrameReady.isPersistenceEnabled = false // Default is false to minimize footprint
         FrameReady.baselineTtffMs = 500L
+
+        // (Optional) Implement FrameReadyStorage to persist metrics like P50 Medians and stable threshold counters.
+        // FrameReady.storage = MyCustomStorageImpl()
+
         FrameReady.install(this, listOf(
             DatabaseInitializer::class.java,
             BInitializer::class.java

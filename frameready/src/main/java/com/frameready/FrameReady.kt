@@ -4,7 +4,6 @@ import android.app.Activity
 import android.app.Application
 import android.content.Context
 import android.content.Intent
-import android.content.SharedPreferences
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -55,11 +54,6 @@ data class StartupMetrics(
 
 object FrameReady {
     private const val TAG = "FrameReady"
-    private const val PREFS_NAME = "frame_ready_preferences"
-    private const val KEY_STABLE_COUNT = "consecutive_stable_launches"
-    private const val KEY_TTFF_HISTORY = "ttff_historical_times"
-    private const val KEY_TOTAL_LAUNCHES = "total_launches_count"
-    private const val KEY_COLD_LAUNCHES = "cold_launches_count"
     private const val DEFAULT_STABLE_THRESHOLD = 100
 
     private val libraryScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -113,11 +107,10 @@ object FrameReady {
     var baselineTtffMs: Long = 0L
 
     /**
-     * Determines whether FrameReady should store metric history in local SharedPreferences.
-     * When disabled, historical percentile medians (e.g. P50/P90), cold start rates, and 
-     * stability count will fall back to default values.
+     * Optional storage interface to enable historical telemetry (Cold Start Rate, P50 Medians, etc).
+     * If left null, FrameReady will emit metrics with default values for historical fields.
      */
-    var isPersistenceEnabled: Boolean = false
+    var storage: FrameReadyStorage? = null
 
     // Dynamic/Configurable Trampoline overrides
     var trampolineThresholdMs: Long = 500L
@@ -160,15 +153,12 @@ object FrameReady {
         globalAppContext = appContext
 
         if (coldLaunchCounted.compareAndSet(false, true)) {
-            if (isPersistenceEnabled) {
+            storage?.let { store ->
                 libraryScope.launch(Dispatchers.IO) {
-                    val prefs = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                    val coldCount = prefs.getInt(KEY_COLD_LAUNCHES, 0) + 1
-                    val totalCount = prefs.getInt(KEY_TOTAL_LAUNCHES, 0) + 1
-                    prefs.edit()
-                        .putInt(KEY_COLD_LAUNCHES, coldCount)
-                        .putInt(KEY_TOTAL_LAUNCHES, totalCount)
-                        .apply()
+                    val coldCount = store.getColdLaunchCount() + 1
+                    val totalCount = store.getTotalLaunchCount() + 1
+                    store.setColdLaunchCount(coldCount)
+                    store.setTotalLaunchCount(totalCount)
                 }
             }
         }
@@ -276,18 +266,11 @@ object FrameReady {
     }
 
     /**
-     * Resets the stability count inside SharedPreferences.
+     * Resets the stability count inside the storage interface.
      */
     @VisibleForTesting
-    fun resetStability(context: Context) {
-        if (!isPersistenceEnabled) return
-        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        prefs.edit()
-            .putInt(KEY_STABLE_COUNT, 0)
-            .putInt(KEY_COLD_LAUNCHES, 1)
-            .putInt(KEY_TOTAL_LAUNCHES, 1)
-            .putString(KEY_TTFF_HISTORY, "")
-            .apply()
+    fun resetStability() {
+        storage?.setStableLaunchCount(0)
     }
 
     /**
@@ -379,11 +362,10 @@ object FrameReady {
                 val count = activeActivitiesCount.incrementAndGet()
                 if (count == 1) {
                     if (firstActivityStartedInProcess.compareAndSet(false, true)) {
-                        if (isPersistenceEnabled) {
+                        storage?.let { store ->
                             libraryScope.launch(Dispatchers.IO) {
-                                val prefs = activity.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                                val totalCount = prefs.getInt(KEY_TOTAL_LAUNCHES, 0) + 1
-                                prefs.edit().putInt(KEY_TOTAL_LAUNCHES, totalCount).apply()
+                                val totalCount = store.getTotalLaunchCount() + 1
+                                store.setTotalLaunchCount(totalCount)
                             }
                         }
                     }
@@ -670,7 +652,8 @@ object FrameReady {
             0.0
         }
 
-        if (!isPersistenceEnabled) {
+        val store = storage
+        if (store == null) {
             val defaultMetrics = partialMetrics.copy(
                 stableLaunchCount = 1,
                 ttffP50 = 0L,
@@ -684,20 +667,16 @@ object FrameReady {
             return
         }
 
-        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val currentStableCount = prefs.getInt(KEY_STABLE_COUNT, 0) + 1
-        
-        prefs.edit().putInt(KEY_STABLE_COUNT, currentStableCount).apply()
+        val currentStableCount = store.getStableLaunchCount() + 1
+        store.setStableLaunchCount(currentStableCount)
 
         // Append to history list
-        val historyStr = prefs.getString(KEY_TTFF_HISTORY, "") ?: ""
-        val historyList = if (historyStr.isEmpty()) mutableListOf() else historyStr.split(",").mapNotNull { it.toLongOrNull() }.toMutableList()
-        
+        val historyList = store.getTtffHistory().toMutableList()
         historyList.add(partialMetrics.ttffMs)
         if (historyList.size > 100) {
             historyList.removeAt(0)
         }
-        prefs.edit().putString(KEY_TTFF_HISTORY, historyList.joinToString(",")).apply()
+        store.setTtffHistory(historyList)
 
         // Calculate exact percentiles
         val sortedHistory = historyList.sorted()
@@ -706,8 +685,8 @@ object FrameReady {
         val p90 = if (size > 0) sortedHistory[(size * 0.9).toInt().coerceAtMost(size - 1)] else partialMetrics.ttffMs
         val p99 = if (size > 0) sortedHistory[(size * 0.99).toInt().coerceAtMost(size - 1)] else partialMetrics.ttffMs
 
-        val coldCount = prefs.getInt(KEY_COLD_LAUNCHES, 1)
-        val totalCount = prefs.getInt(KEY_TOTAL_LAUNCHES, 1).coerceAtLeast(coldCount)
+        val coldCount = store.getColdLaunchCount().coerceAtLeast(1)
+        val totalCount = store.getTotalLaunchCount().coerceAtLeast(coldCount)
         val computedColdStartRate = (coldCount.toDouble() / totalCount.toDouble()) * 100.0
 
         val completedMetrics = partialMetrics.copy(
@@ -729,14 +708,11 @@ object FrameReady {
 
     private fun handleStartupFailure(t: Throwable, componentName: String) {
         Log.e(TAG, "Initialization failure. Failed element: $componentName", t)
-        if (!isPersistenceEnabled) return
         
         // Reset count to zero
-        val ctx = globalAppContext ?: activityMap.keys.firstOrNull()
-        if (ctx != null) {
+        storage?.let { store ->
             handler.post {
-                val prefs = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                prefs.edit().putInt(KEY_STABLE_COUNT, 0).apply()
+                store.setStableLaunchCount(0)
             }
         }
     }

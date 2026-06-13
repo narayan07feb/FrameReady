@@ -298,9 +298,19 @@ class FrameReadyTest {
     // ==========================================
     @Test
     fun testStabilityCounter_ResetsOnFailure() {
+        var stableCount = 15
+        val testStorage = object : FrameReadyStorage {
+            override fun getStableLaunchCount() = stableCount
+            override fun setStableLaunchCount(count: Int) { stableCount = count }
+            override fun getTotalLaunchCount() = 0
+            override fun setTotalLaunchCount(count: Int) {}
+            override fun getColdLaunchCount() = 0
+            override fun setColdLaunchCount(count: Int) {}
+            override fun getTtffHistory() = emptyList<Long>()
+            override fun setTtffHistory(history: List<Long>) {}
+        }
+        FrameReady.storage = testStorage
         FrameReady.install(context, emptyList())
-        val sharedPrefs = context.getSharedPreferences("frame_ready_preferences", Context.MODE_PRIVATE)
-        sharedPrefs.edit().putInt("consecutive_stable_launches", 15).apply()
 
         // Call failure tracker manually
         val exception = RuntimeException("Boom")
@@ -313,9 +323,7 @@ class FrameReadyTest {
         // Wait for handler UI post to clean up shared preference
         shadowOf(Looper.getMainLooper()).idle()
 
-        // Must reset back to 0
-        val count = sharedPrefs.getInt("consecutive_stable_launches", -1)
-        assertEquals(0, count)
+        assertEquals("Failure should reset stability count to 0", 0, testStorage.getStableLaunchCount())
     }
 
     // ==========================================

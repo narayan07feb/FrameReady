@@ -66,7 +66,7 @@ afterEvaluate {
                 from(components["release"])
                 groupId = "com.github.narayan07feb"
                 artifactId = "FrameReady"
-                version = "1.1.5"
+                version = "1.1.7"
             }
         }
     }
