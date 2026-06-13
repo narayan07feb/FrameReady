@@ -16,7 +16,6 @@ import android.util.Log
 class FrameReadyProvider : ContentProvider() {
 
     override fun onCreate(): Boolean {
-        FrameReady.contentProviderStartTime = android.os.SystemClock.elapsedRealtime()
         val context = context ?: return false
         val packageManager = context.packageManager
         val providerName = ComponentName(context, FrameReadyProvider::class.java)

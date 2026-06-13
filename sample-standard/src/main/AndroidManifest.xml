@@ -3,6 +3,7 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <application
+        android:name=".SampleApplication"
         android:allowBackup="true"
         android:icon="@android:drawable/sym_def_app_icon"
         android:label="FR Standard Sample"
@@ -12,13 +13,19 @@
         <profileable android:shell="true" />
 
         <activity
-            android:name="com.example.samplestandard.StandardMainActivity"
+            android:name="com.example.samplestandard.SplashActivity"
             android:exported="true"
             android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+        </activity>
+        
+        <activity
+            android:name="com.example.samplestandard.StandardMainActivity"
+            android:exported="true"
+            android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
         </activity>
 
         <!-- FrameReady library auto-discovery via manifest metadata -->
