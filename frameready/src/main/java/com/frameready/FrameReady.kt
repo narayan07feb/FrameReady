@@ -78,7 +78,18 @@ object FrameReady {
     internal var appOnCreateTime: Long = SystemClock.elapsedRealtime()
 
     @Volatile
-    var contentProviderStartTime: Long = SystemClock.elapsedRealtime()
+    var contentProviderStartTime: Long = getTrueProcessStartTime()
+
+    private fun getTrueProcessStartTime(): Long {
+        return if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N) {
+            val osUptimeStart = android.os.Process.getStartUptimeMillis()
+            val currentUptime = android.os.SystemClock.uptimeMillis()
+            val overhead = currentUptime - osUptimeStart
+            SystemClock.elapsedRealtime() - overhead
+        } else {
+            SystemClock.elapsedRealtime()
+        }
+    }
 
     private var sortedInitializers: List<Class<Any>>? = null
 
