@@ -20,12 +20,13 @@ class FrameReadyProvider : ContentProvider() {
         val packageManager = context.packageManager
         val providerName = ComponentName(context, FrameReadyProvider::class.java)
 
+        val initializersList = mutableListOf<Class<Any>>()
+
         try {
             val providerInfo = packageManager.getProviderInfo(providerName, PackageManager.GET_META_DATA)
             val metadata = providerInfo.metaData
 
             if (metadata != null) {
-                val initializersList = mutableListOf<Class<Any>>()
                 val keys = metadata.keySet()
                 for (key in keys) {
                     val value = metadata.getString(key)
@@ -43,15 +44,14 @@ class FrameReadyProvider : ContentProvider() {
                         }
                     }
                 }
-
-                if (initializersList.isNotEmpty()) {
-                    FrameReady.install(context, initializersList)
-                    Log.i(TAG, "FrameReady initialized automatically with ${initializersList.size} initializers.")
-                }
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to read Metadata. FrameReady will not be auto-initialized.", e)
+            Log.e(TAG, "Failed to read Metadata for auto-discovery.", e)
         }
+
+        // Always install the engine to start TTFF tracking, even if the list is empty!
+        FrameReady.install(context, initializersList)
+        Log.i(TAG, "FrameReady initialized automatically with ${initializersList.size} initializers.")
 
         return true
     }
