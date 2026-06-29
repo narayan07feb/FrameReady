@@ -34,7 +34,7 @@ class StartupBenchmark {
             pressHome()
             
             val intent = Intent()
-            intent.setPackage("com.aistudio.frsample.standard.pndmsd")
+            intent.setClassName("com.aistudio.frsample.standard.pndmsd", "com.example.samplestandard.StandardMainActivity")
             intent.action = "android.intent.action.MAIN"
             intent.addCategory("android.intent.category.LAUNCHER")
             intent.putExtra("INIT_MODE", mode)
