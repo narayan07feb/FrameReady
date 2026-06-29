@@ -11,25 +11,29 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 
+/**
+ * True zero-library baseline benchmark.
+ *
+ * Targets :sample-baseline — a standalone app with NO FrameReady dependency that
+ * simulates 1,500ms of blocking synchronous initialization in Application.onCreate().
+ *
+ * Install the baseline APK before running:
+ *   ./gradlew :sample-baseline:installRelease
+ *
+ * Compare results against StartupBenchmark.benchmarkFrameReady to see the real
+ * TTFF and peak-memory delta introduced by adopting FrameReady.
+ */
 @OptIn(ExperimentalMetricApi::class)
 @RunWith(AndroidJUnit4::class)
-class StartupBenchmark {
+class BaselineBenchmark {
 
     @get:Rule
     val benchmarkRule = MacrobenchmarkRule()
 
     @Test
-    fun benchmarkTraditionalStartup() = runBenchmarkWithMode("traditional")
-
-    @Test
-    fun benchmarkAppStartupLibrary() = runBenchmarkWithMode("appstartup")
-
-    @Test
-    fun benchmarkFrameReady() = runBenchmarkWithMode("frameready")
-
-    private fun runBenchmarkWithMode(mode: String) {
+    fun benchmarkNoLibraryTraditional() {
         benchmarkRule.measureRepeated(
-            packageName = "com.aistudio.frsample.standard.pndmsd",
+            packageName = "com.aistudio.frsample.baseline",
             metrics = listOf(
                 StartupTimingMetric(),
                 MemoryUsageMetric(MemoryUsageMetric.Mode.Max)
@@ -40,10 +44,12 @@ class StartupBenchmark {
             pressHome()
 
             val intent = Intent()
-            intent.setClassName("com.aistudio.frsample.standard.pndmsd", "com.example.samplestandard.StandardMainActivity")
+            intent.setClassName(
+                "com.aistudio.frsample.baseline",
+                "com.example.samplebaseline.BaselineMainActivity"
+            )
             intent.action = "android.intent.action.MAIN"
             intent.addCategory("android.intent.category.LAUNCHER")
-            intent.putExtra("INIT_MODE", mode)
 
             startActivityAndWait(intent)
         }
