@@ -1,8 +1,6 @@
 package com.example.benchmark
 
 import android.content.Intent
-import androidx.benchmark.macro.ExperimentalMetricApi
-import androidx.benchmark.macro.MemoryUsageMetric
 import androidx.benchmark.macro.StartupMode
 import androidx.benchmark.macro.StartupTimingMetric
 import androidx.benchmark.macro.junit4.MacrobenchmarkRule
@@ -11,7 +9,6 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 
-@OptIn(ExperimentalMetricApi::class)
 @RunWith(AndroidJUnit4::class)
 class StartupBenchmark {
 
@@ -29,20 +26,18 @@ class StartupBenchmark {
 
     private fun runBenchmarkWithMode(mode: String) {
         benchmarkRule.measureRepeated(
-            packageName = "com.aistudio.frsample.standard.pndmsd",
-            metrics = listOf(
-                StartupTimingMetric(),
-                MemoryUsageMetric(MemoryUsageMetric.Mode.Max)
-            ),
+            packageName = "com.frameready.sample.standard",
+            metrics = listOf(StartupTimingMetric()),
             iterations = 5,
             startupMode = StartupMode.COLD
         ) {
             pressHome()
 
             val intent = Intent()
-            intent.setClassName("com.aistudio.frsample.standard.pndmsd", "com.example.samplestandard.StandardMainActivity")
-            intent.action = "android.intent.action.MAIN"
-            intent.addCategory("android.intent.category.LAUNCHER")
+            intent.setClassName(
+                "com.frameready.sample.standard",
+                "com.example.samplestandard.StandardMainActivity"
+            )
             intent.putExtra("INIT_MODE", mode)
 
             startActivityAndWait(intent)

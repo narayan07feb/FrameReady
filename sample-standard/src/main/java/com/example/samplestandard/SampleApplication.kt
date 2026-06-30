@@ -11,6 +11,10 @@ class SampleApplication : Application() {
         super.onCreate()
         Log.d("SampleApplication", "Application onCreate: Initializing FrameReady BYOS")
 
+        // Simulate 800ms of blocking SDK initialization (Analytics, Crash reporting, etc.)
+        // that a real production app performs in Application.onCreate().
+        Thread.sleep(800)
+
         FrameReady.storage = object : FrameReadyStorage {
             val prefs = getSharedPreferences("my_app_telemetry", Context.MODE_PRIVATE)
 

@@ -25,9 +25,11 @@ class SplashActivity : ComponentActivity() {
             }
         }
 
-        // Simulate a tiny trampoline delay (e.g. 100ms router decision)
         Handler(Looper.getMainLooper()).postDelayed({
-            startActivity(Intent(this, StandardMainActivity::class.java))
+            val next = Intent(this, StandardMainActivity::class.java)
+            // Forward all extras from the launcher intent (e.g. INIT_MODE from benchmarks)
+            intent.extras?.let { next.putExtras(it) }
+            startActivity(next)
             finish()
         }, 100)
     }

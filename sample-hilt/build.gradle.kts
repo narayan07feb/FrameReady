@@ -11,7 +11,7 @@ android {
   compileSdk { version = release(36) { minorApiLevel = 1 } }
 
   defaultConfig {
-    applicationId = "com.aistudio.frsample.hilt.bndmrs"
+    applicationId = "com.frameready.sample.hilt"
     minSdk = 24
     targetSdk = 36
     versionCode = 1
@@ -23,6 +23,7 @@ android {
       isCrunchPngs = false
       isMinifyEnabled = false
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+      signingConfig = signingConfigs.getByName("debug")
     }
     debug {
     }

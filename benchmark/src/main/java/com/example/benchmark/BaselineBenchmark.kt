@@ -1,8 +1,6 @@
 package com.example.benchmark
 
 import android.content.Intent
-import androidx.benchmark.macro.ExperimentalMetricApi
-import androidx.benchmark.macro.MemoryUsageMetric
 import androidx.benchmark.macro.StartupMode
 import androidx.benchmark.macro.StartupTimingMetric
 import androidx.benchmark.macro.junit4.MacrobenchmarkRule
@@ -23,7 +21,6 @@ import org.junit.runner.RunWith
  * Compare results against StartupBenchmark.benchmarkFrameReady to see the real
  * TTFF and peak-memory delta introduced by adopting FrameReady.
  */
-@OptIn(ExperimentalMetricApi::class)
 @RunWith(AndroidJUnit4::class)
 class BaselineBenchmark {
 
@@ -33,11 +30,8 @@ class BaselineBenchmark {
     @Test
     fun benchmarkNoLibraryTraditional() {
         benchmarkRule.measureRepeated(
-            packageName = "com.aistudio.frsample.baseline",
-            metrics = listOf(
-                StartupTimingMetric(),
-                MemoryUsageMetric(MemoryUsageMetric.Mode.Max)
-            ),
+            packageName = "com.frameready.sample.baseline",
+            metrics = listOf(StartupTimingMetric()),
             iterations = 5,
             startupMode = StartupMode.COLD
         ) {
@@ -45,7 +39,7 @@ class BaselineBenchmark {
 
             val intent = Intent()
             intent.setClassName(
-                "com.aistudio.frsample.baseline",
+                "com.frameready.sample.baseline",
                 "com.example.samplebaseline.BaselineMainActivity"
             )
             intent.action = "android.intent.action.MAIN"

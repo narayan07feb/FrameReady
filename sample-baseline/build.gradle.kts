@@ -9,7 +9,7 @@ android {
   compileSdk { version = release(36) { minorApiLevel = 1 } }
 
   defaultConfig {
-    applicationId = "com.aistudio.frsample.baseline"
+    applicationId = "com.frameready.sample.baseline"
     minSdk = 24
     targetSdk = 36
     versionCode = 1
