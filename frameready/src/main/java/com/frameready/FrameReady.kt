@@ -10,8 +10,6 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
-import android.view.View
-import android.view.ViewTreeObserver
 import androidx.annotation.VisibleForTesting
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -449,66 +447,34 @@ object FrameReady {
             // Clean up activity listener to avoid unnecessary overhead after trigger
             unregisterCallbacks(activity.applicationContext)
 
+            val appContext = activity.applicationContext
+            val activityName = activity.localClassName
+
             if (isExecutingInUnitTest) {
                 // Inline fallback for headless test runners
                 handler.post {
-                    val firstFrameTime = SystemClock.elapsedRealtime()
-                    runAll(activity.applicationContext, firstFrameTime, activity.localClassName)
+                    runAll(appContext, SystemClock.elapsedRealtime(), activityName)
                 }
             } else {
-                val decorView = activity.window?.decorView
-                if (decorView != null) {
-                    if (decorView.isAttachedToWindow) {
-                        registerOnNextDrawAndPost(activity, decorView)
-                    } else {
-                        val attachListener = object : android.view.View.OnAttachStateChangeListener {
-                            override fun onViewAttachedToWindow(v: android.view.View) {
-                                decorView.removeOnAttachStateChangeListener(this)
-                                registerOnNextDrawAndPost(activity, decorView)
-                            }
-                            override fun onViewDetachedFromWindow(v: android.view.View) {}
-                        }
-                        decorView.addOnAttachStateChangeListener(attachListener)
-                    }
-                } else {
-                    // Fallback to post if decorView is null
-                    handler.post {
-                        val firstFrameTime = SystemClock.elapsedRealtime()
-                        runAll(activity.applicationContext, firstFrameTime, activity.localClassName)
-                    }
-                }
+                // The trampoline threshold has elapsed so at least one frame has already drawn.
+                // Use Choreographer.postFrameCallback to fire on the next VSYNC regardless of
+                // whether the view hierarchy is dirty — this is more reliable than OnDrawListener
+                // when the UI is idle (e.g. all coroutines suspended in await()).
+                scheduleRunAllOnNextFrame(appContext, activityName)
             }
         }
     }
 
-    private fun registerOnNextDrawAndPost(activity: Activity, decorView: android.view.View) {
-        val observer = decorView.viewTreeObserver
-        val drawListener = object : android.view.ViewTreeObserver.OnDrawListener {
-            private var handled = false
-            override fun onDraw() {
-                if (handled) return
-                handled = true
-                // Post removal of listener to avoid exceptions during drawing pass
-                handler.post {
-                    if (decorView.viewTreeObserver.isAlive) {
-                        decorView.viewTreeObserver.removeOnDrawListener(this)
-                    }
-                }
-                
-                if (Build.VERSION.SDK_INT >= 29) {
-                    decorView.viewTreeObserver.registerFrameCommitCallback {
-                        val firstFrameTime = SystemClock.elapsedRealtime()
-                        runAll(activity.applicationContext, firstFrameTime, activity.localClassName)
-                    }
-                } else {
-                    decorView.postOnAnimation {
-                        val firstFrameTime = SystemClock.elapsedRealtime()
-                        runAll(activity.applicationContext, firstFrameTime, activity.localClassName)
-                    }
-                }
+    private fun scheduleRunAllOnNextFrame(appContext: Context, activityName: String) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN) {
+            android.view.Choreographer.getInstance().postFrameCallback { _ ->
+                runAll(appContext, SystemClock.elapsedRealtime(), activityName)
+            }
+        } else {
+            handler.post {
+                runAll(appContext, SystemClock.elapsedRealtime(), activityName)
             }
         }
-        observer.addOnDrawListener(drawListener)
     }
 
     private fun triggerBackgroundExecution(context: Context) {

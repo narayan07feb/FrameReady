@@ -28,20 +28,21 @@
             android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
         </activity>
 
-        <!-- FrameReady library auto-discovery via manifest metadata -->
+        <!-- FrameReady: 8 initializers across different SDK categories -->
         <provider
             android:name="com.frameready.FrameReadyProvider"
             android:authorities="${applicationId}.frameready"
             android:exported="false">
-            <meta-data
-                android:name="com.example.samplestandard.DatabaseInitializer"
-                android:value="post_frame_initializer" />
-            <meta-data
-                android:name="com.example.samplestandard.ConfigInitializer"
-                android:value="post_frame_initializer" />
-            <meta-data
-                android:name="com.example.samplestandard.NetworkCacheInitializer"
-                android:value="post_frame_initializer" />
+            <!-- No-dependency initializers (run in parallel immediately) -->
+            <meta-data android:name="com.example.samplestandard.AnalyticsInitializer"     android:value="post_frame_initializer" />
+            <meta-data android:name="com.example.samplestandard.CrashReporterInitializer" android:value="post_frame_initializer" />
+            <meta-data android:name="com.example.samplestandard.ImageLoaderInitializer"   android:value="post_frame_initializer" />
+            <meta-data android:name="com.example.samplestandard.DatabaseInitializer"      android:value="post_frame_initializer" />
+            <meta-data android:name="com.example.samplestandard.ConfigInitializer"        android:value="post_frame_initializer" />
+            <!-- Dependent initializers (FrameReady Kahn-sorts these automatically) -->
+            <meta-data android:name="com.example.samplestandard.FeatureFlagsInitializer"      android:value="post_frame_initializer" />
+            <meta-data android:name="com.example.samplestandard.PushNotificationInitializer"  android:value="post_frame_initializer" />
+            <meta-data android:name="com.example.samplestandard.NetworkCacheInitializer"      android:value="post_frame_initializer" />
         </provider>
 
 
