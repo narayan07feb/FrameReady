@@ -140,7 +140,7 @@ dependencyResolutionManagement {
 Add the dependency to your module:
 ```kotlin
 dependencies {
-    implementation("com.github.narayan07feb:FrameReady:1.1.9")
+    implementation("com.github.narayan07feb:FrameReady:1.2.0")
 }
 ```
 
@@ -558,7 +558,7 @@ dependencyResolutionManagement {
 Then add the dependency to your module:
 ```kotlin
 dependencies {
-    implementation("com.github.narayan07feb:FrameReady:1.1.9")
+    implementation("com.github.narayan07feb:FrameReady:1.2.0")
 }
 ```
 
@@ -566,7 +566,7 @@ dependencies {
 FrameReady includes a fully configured `maven-publish` plugin. If the repository owner publishes to Sonatype Maven Central, you can use the standard coordinates:
 ```kotlin
 dependencies {
-    implementation("com.frameready:frameready:1.1.9")
+    implementation("com.frameready:frameready:1.2.0")
 }
 ```
 
