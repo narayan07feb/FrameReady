@@ -34,7 +34,6 @@ class FrameReadyTest {
     fun setUp() {
         context = ApplicationProvider.getApplicationContext<Context>()
         FrameReady.resetAllForTesting()
-        FrameReady.stableThreshold = 100
         FrameReady.baselineTtffMs = 350L
     }
 

@@ -62,8 +62,6 @@ class StandardMainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        FrameReady.stableThreshold = 1
-
         val initMode = intent.getStringExtra("INIT_MODE") ?: "frameready"
 
         // --- MACROBENCHMARK SIMULATION ---

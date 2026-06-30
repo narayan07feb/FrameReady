@@ -47,9 +47,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         
-        // Ensure baseline is set for metrics calculations
         FrameReady.baselineTtffMs = 450L
-        FrameReady.stableThreshold = 1 // Set to 1 for immediate demo feedback inside UI
 
         setContent {
             MyApplicationTheme {

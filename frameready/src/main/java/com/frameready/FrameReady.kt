@@ -54,7 +54,6 @@ data class StartupMetrics(
 
 object FrameReady {
     private const val TAG = "FrameReady"
-    private const val DEFAULT_STABLE_THRESHOLD = 100
 
     private val libraryScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val handler = Handler(Looper.getMainLooper())
@@ -102,8 +101,6 @@ object FrameReady {
         runCatching { Class.forName("org.robolectric.Robolectric") }.isSuccess
     }
     
-    // Configurable thresholds for testing/open-source adoption
-    var stableThreshold: Int = DEFAULT_STABLE_THRESHOLD
     var baselineTtffMs: Long = 0L
 
     /**
@@ -700,10 +697,7 @@ object FrameReady {
 
         Log.i(TAG, "ActivityTaskManager [FrameReady-Logged]: Displayed $displayedLogName: +${completedMetrics.displayedMs}ms (coldStartRate: ${completedMetrics.coldStartRate}%)")
 
-        // Only emit to flow if N stable launches is satisfied
-        if (currentStableCount >= stableThreshold) {
-            _metricsFlow.tryEmit(completedMetrics)
-        }
+        _metricsFlow.tryEmit(completedMetrics)
     }
 
     private fun handleStartupFailure(t: Throwable, componentName: String) {

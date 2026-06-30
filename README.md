@@ -464,7 +464,7 @@ The `metricsFlow` emits a comprehensive `StartupMetrics` payload. Here is a brea
 > The following historical fields require **local persistence** to calculate. By default, FrameReady does not store any data locally, and these fields will emit default values. To enable historical medians, implement `FrameReadyStorage` and set `FrameReady.storage = yourImplementation` before calling `install()`.
 
 * **`coldStartRate`**: A percentage (`Double`) representing how many of the app's total historical launches were true OS "Cold Starts" (e.g., `100.0` = 100%).
-* **`stableLaunchCount`**: The number of consecutive, crash-free launches your application has completed. If the app crashes during boot, FrameReady intercepts the failure and resets this to `0`. FrameReady uses this internally to pause emitting `P50` averages until a `stableThreshold` is met (default: 100). 
+* **`stableLaunchCount`**: The number of consecutive, crash-free launches your application has completed. If the app crashes during boot, FrameReady intercepts the failure and resets this to `0`. FrameReady always emits metrics every launch — use `stableLaunchCount` in your collector to decide when the data is statistically meaningful (e.g. only send `ttffP50` to your analytics backend once `stableLaunchCount >= 50`).
 * **`ttffP50` / `ttffP90` / `ttffP99`**: The historically maintained percentiles (Median, 90th, 99th) of your startup times, calculated dynamically based on stable historical data.
 
 ---

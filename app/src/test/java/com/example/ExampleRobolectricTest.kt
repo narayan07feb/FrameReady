@@ -31,8 +31,6 @@ class ExampleRobolectricTest {
 
   @Test
   fun `verify metricsFlow emits value`() = kotlinx.coroutines.test.runTest {
-    com.frameready.FrameReady.stableThreshold = 1
-    
     val controller = Robolectric.buildActivity(MainActivity::class.java)
     controller.setup()
     
