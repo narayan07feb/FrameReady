@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application
+        android:name=".MetricsOnlyApplication"
+        android:allowBackup="true"
+        android:icon="@android:drawable/sym_def_app_icon"
+        android:label="FR Metrics Only (0 Initializers)"
+        android:supportsRtl="true"
+        android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
+
+        <profileable android:shell="true" />
+
+        <activity
+            android:name=".MetricsOnlyMainActivity"
+            android:exported="true"
+            android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!--
+            No meta-data for FrameReadyInitializer here.
+            FrameReadyProvider auto-installs with 0 initializers — only the
+            ContentProvider + lifecycle callbacks are active.
+        -->
+
+    </application>
+
+</manifest>

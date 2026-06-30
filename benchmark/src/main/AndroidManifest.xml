@@ -3,5 +3,6 @@
     <queries>
         <package android:name="com.frameready.sample.standard" />
         <package android:name="com.frameready.sample.baseline" />
+        <package android:name="com.frameready.sample.metricsonly" />
     </queries>
 </manifest>

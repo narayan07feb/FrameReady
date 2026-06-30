@@ -10,16 +10,15 @@ import org.junit.Test
 import org.junit.runner.RunWith
 
 /**
- * True zero-library baseline benchmark.
+ * Library-overhead benchmarks comparing a zero-library baseline against FrameReady
+ * installed with 0 initializers (cold-start tracking only).
  *
- * Targets :sample-baseline — a standalone app with NO FrameReady dependency that
- * simulates 1,500ms of blocking synchronous initialization in Application.onCreate().
+ * Both apps block Application.onCreate() for 1,500ms with identical workloads.
+ * The only variable is whether FrameReady's ContentProvider is present.
+ * The TTFF delta between the two tests = pure library overhead.
  *
- * Install the baseline APK before running:
- *   ./gradlew :sample-baseline:installRelease
- *
- * Compare results against StartupBenchmark.benchmarkFrameReady to see the real
- * TTFF and peak-memory delta introduced by adopting FrameReady.
+ * Install both APKs before running:
+ *   ./gradlew :sample-baseline:installDebug :sample-metrics-only:installDebug
  */
 @RunWith(AndroidJUnit4::class)
 class BaselineBenchmark {
@@ -27,6 +26,7 @@ class BaselineBenchmark {
     @get:Rule
     val benchmarkRule = MacrobenchmarkRule()
 
+    /** No library. Cold-start TTFF with 1,500ms blocking Application.onCreate(). */
     @Test
     fun benchmarkNoLibraryTraditional() {
         benchmarkRule.measureRepeated(
@@ -36,15 +36,34 @@ class BaselineBenchmark {
             startupMode = StartupMode.COLD
         ) {
             pressHome()
-
             val intent = Intent()
             intent.setClassName(
                 "com.frameready.sample.baseline",
                 "com.example.samplebaseline.BaselineMainActivity"
             )
-            intent.action = "android.intent.action.MAIN"
-            intent.addCategory("android.intent.category.LAUNCHER")
+            startActivityAndWait(intent)
+        }
+    }
 
+    /**
+     * FrameReady with 0 initializers — cold-start rate tracking only.
+     * Same 1,500ms blocking onCreate() as benchmarkNoLibraryTraditional.
+     * TTFF delta vs above = ContentProvider + lifecycle-callback overhead only.
+     */
+    @Test
+    fun benchmarkMetricsOnly() {
+        benchmarkRule.measureRepeated(
+            packageName = "com.frameready.sample.metricsonly",
+            metrics = listOf(StartupTimingMetric()),
+            iterations = 5,
+            startupMode = StartupMode.COLD
+        ) {
+            pressHome()
+            val intent = Intent()
+            intent.setClassName(
+                "com.frameready.sample.metricsonly",
+                "com.example.samplemetricsonly.MetricsOnlyMainActivity"
+            )
             startActivityAndWait(intent)
         }
     }
