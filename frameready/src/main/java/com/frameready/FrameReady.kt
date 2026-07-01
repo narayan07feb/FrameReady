@@ -10,6 +10,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
+import android.view.View
 import androidx.annotation.VisibleForTesting
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -449,6 +450,8 @@ object FrameReady {
 
             val appContext = activity.applicationContext
             val activityName = activity.localClassName
+            // Capture decorView before unregisterCallbacks (safe: it clears activityMap, not window)
+            val decorView = activity.window?.decorView
 
             if (isExecutingInUnitTest) {
                 // Inline fallback for headless test runners
@@ -456,24 +459,35 @@ object FrameReady {
                     runAll(appContext, SystemClock.elapsedRealtime(), activityName)
                 }
             } else {
-                // The trampoline threshold has elapsed so at least one frame has already drawn.
-                // Use Choreographer.postFrameCallback to fire on the next VSYNC regardless of
-                // whether the view hierarchy is dirty — this is more reliable than OnDrawListener
-                // when the UI is idle (e.g. all coroutines suspended in await()).
-                scheduleRunAllOnNextFrame(appContext, activityName)
+                scheduleRunAllOnNextFrame(appContext, activityName, decorView)
             }
         }
     }
 
-    private fun scheduleRunAllOnNextFrame(appContext: Context, activityName: String) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN) {
-            android.view.Choreographer.getInstance().postFrameCallback { _ ->
-                runAll(appContext, SystemClock.elapsedRealtime(), activityName)
+    private fun scheduleRunAllOnNextFrame(
+        appContext: Context,
+        activityName: String,
+        decorView: View?
+    ) {
+        // Choreographer.postFrameCallback fires at the next VSYNC unconditionally — unlike
+        // OnDrawListener it does not require the view hierarchy to be dirty, so it works even
+        // when the UI is fully idle (e.g. all coroutines suspended in await()).
+        android.view.Choreographer.getInstance().postFrameCallback { _ ->
+            if (Build.VERSION.SDK_INT >= 29 && decorView != null) {
+                val vto = decorView.viewTreeObserver
+                if (vto.isAlive) {
+                    // Mark the view dirty so traversal runs in this frame cycle, then measure
+                    // TTFF at frame-commit time (after the buffer is submitted to the display)
+                    // for accurate pixel-on-screen timing.
+                    decorView.invalidate()
+                    vto.registerFrameCommitCallback {
+                        runAll(appContext, SystemClock.elapsedRealtime(), activityName)
+                    }
+                    return@postFrameCallback
+                }
             }
-        } else {
-            handler.post {
-                runAll(appContext, SystemClock.elapsedRealtime(), activityName)
-            }
+            // API < 29 or dead VTO: VSYNC start is close enough (~8–16 ms optimistic)
+            runAll(appContext, SystemClock.elapsedRealtime(), activityName)
         }
     }
 
