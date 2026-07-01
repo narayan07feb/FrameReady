@@ -43,6 +43,9 @@
             <meta-data android:name="com.example.samplestandard.FeatureFlagsInitializer"      android:value="post_frame_initializer" />
             <meta-data android:name="com.example.samplestandard.PushNotificationInitializer"  android:value="post_frame_initializer" />
             <meta-data android:name="com.example.samplestandard.NetworkCacheInitializer"      android:value="post_frame_initializer" />
+            <!-- Failure-isolation initializers: FailingInitializer throws; its dependent cascades -->
+            <meta-data android:name="com.example.samplestandard.FailingInitializer"           android:value="post_frame_initializer" />
+            <meta-data android:name="com.example.samplestandard.DependentOnFailingInitializer" android:value="post_frame_initializer" />
         </provider>
 
 

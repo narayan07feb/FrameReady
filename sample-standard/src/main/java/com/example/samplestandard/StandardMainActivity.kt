@@ -142,6 +142,34 @@ class NetworkCacheInitializer : FrameReadyInitializer<String> {
 }
 
 // ─────────────────────────────────────────────
+// INITIALIZER 9 — Intentionally Failing (no deps)
+// Demonstrates failure isolation: only this initializer and its
+// dependents fail; all other initializers still resolve.
+// ─────────────────────────────────────────────
+class FailingInitializer : FrameReadyInitializer<String> {
+    override fun dependencies() = emptyList<Class<out FrameReadyInitializer<*>>>()
+    override fun executionThread() = ExecutionThread.BACKGROUND
+    override suspend fun create(context: android.content.Context): String {
+        delay(300)
+        throw RuntimeException("Simulated SDK init failure (e.g. missing API key)")
+    }
+}
+
+// ─────────────────────────────────────────────
+// INITIALIZER 10 — Depends on the failing one
+// Demonstrates cascade: when a dependency fails, this initializer
+// also fails — but all independent initializers are unaffected.
+// ─────────────────────────────────────────────
+class DependentOnFailingInitializer : FrameReadyInitializer<String> {
+    override fun dependencies() = listOf(FailingInitializer::class.java)
+    override fun executionThread() = ExecutionThread.BACKGROUND
+    override suspend fun create(context: android.content.Context): String {
+        delay(200)
+        return "dependent::ok"
+    }
+}
+
+// ─────────────────────────────────────────────
 // DATA MODEL for live UI state
 // ─────────────────────────────────────────────
 data class InitStatus(
@@ -191,16 +219,23 @@ fun StandardSampleScreen(activityStartMs: Long) {
     // Each entry tracks live state for one initializer
     val statuses = remember {
         mutableStateListOf(
-            InitStatus("Analytics",        "📊", "none"),
-            InitStatus("CrashReporter",    "🛡️", "none"),
-            InitStatus("ImageLoader",      "🖼️", "none"),
-            InitStatus("FeatureFlags",     "🚩", "→ Analytics"),
-            InitStatus("PushNotifications","🔔", "→ CrashReporter"),
-            InitStatus("Database",         "🗄️", "none"),
-            InitStatus("Config",           "⚙️", "none"),
-            InitStatus("NetworkCache",     "🌐", "→ DB + Config"),
+            InitStatus("Analytics",              "📊", "none"),
+            InitStatus("CrashReporter",          "🛡️", "none"),
+            InitStatus("ImageLoader",            "🖼️", "none"),
+            InitStatus("FeatureFlags",           "🚩", "→ Analytics"),
+            InitStatus("PushNotifications",      "🔔", "→ CrashReporter"),
+            InitStatus("Database",               "🗄️", "none"),
+            InitStatus("Config",                 "⚙️", "none"),
+            InitStatus("NetworkCache",           "🌐", "→ DB + Config"),
+            InitStatus("FailingSDK",             "💥", "none"),
+            InitStatus("DependentOnFailing",     "🔗", "→ FailingSDK"),
         )
     }
+
+    // getOrNull() poll: shows the non-blocking API returning null → actual value
+    var getOrNullSnapshot by remember { mutableStateOf<String?>(null) }
+    // Late-arrival: await() called after all initializers are done — should resolve instantly
+    var lateArrivalMs by remember { mutableStateOf<Long?>(null) }
 
     // ── Aggressive pre-init access: fire ALL awaits immediately ──────────
     // These coroutines start before any initializer has run (we're still
@@ -277,6 +312,37 @@ fun StandardSampleScreen(activityStartMs: Long) {
             try { markResolved(7, FrameReady.await(NetworkCacheInitializer::class.java)) }
             catch (e: Exception) { markError(7, e.message ?: "timeout") }
         }
+        // Initializer 9: intentionally fails to prove failure isolation
+        launch {
+            markCalled(8)
+            try { markResolved(8, FrameReady.await(FailingInitializer::class.java)) }
+            catch (e: Exception) { markError(8, e.message ?: "failed") }
+        }
+        // Initializer 10: depends on #9 — cascade-fails, others unaffected
+        launch {
+            markCalled(9)
+            try { markResolved(9, FrameReady.await(DependentOnFailingInitializer::class.java)) }
+            catch (e: Exception) { markError(9, e.message ?: "cascade") }
+        }
+
+        // getOrNull() poll: non-blocking; returns null until Analytics resolves
+        launch {
+            while (getOrNullSnapshot == null) {
+                getOrNullSnapshot = FrameReady.getOrNull(AnalyticsInitializer::class.java)
+                if (getOrNullSnapshot == null) delay(100)
+            }
+        }
+
+        // Late-arrival await(): wait for everything to settle, then call await() on an already-
+        // resolved initializer and measure how long it takes — should be < 1ms (instant cache hit).
+        launch {
+            delay(6000)
+            val t = SystemClock.elapsedRealtime()
+            try {
+                FrameReady.await(ImageLoaderInitializer::class.java)
+                lateArrivalMs = SystemClock.elapsedRealtime() - t
+            } catch (_: Exception) {}
+        }
 
         // Collect metrics
         launch {
@@ -285,6 +351,7 @@ fun StandardSampleScreen(activityStartMs: Long) {
     }
 
     val resolvedCount = statuses.count { it.state == InitStatus.State.RESOLVED }
+    val errorCount    = statuses.count { it.state == InitStatus.State.ERROR }
     val metrics = frameReadyMetrics.value
 
     MaterialTheme(
@@ -299,7 +366,7 @@ fun StandardSampleScreen(activityStartMs: Long) {
                 TopAppBar(
                     title = {
                         Column {
-                            Text("FrameReady — 8 Initializers", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                            Text("FrameReady — 10 Initializers", fontWeight = FontWeight.Bold, fontSize = 16.sp)
                             Text("Aggressive Pre-Init Access Demo", fontSize = 11.sp, color = Color.White.copy(alpha = 0.5f))
                         }
                     },
@@ -341,16 +408,16 @@ fun StandardSampleScreen(activityStartMs: Long) {
                                 fontWeight = FontWeight.Bold
                             )
                             Text(
-                                "8 SDKs registered — zero main-thread cost",
+                                "10 SDKs registered — zero main-thread cost",
                                 color = Color.White.copy(alpha = 0.5f),
                                 fontSize = 11.sp
                             )
                         }
                         Column(horizontalAlignment = Alignment.End) {
-                            Text("Resolved", color = Color.White.copy(alpha = 0.6f), fontSize = 11.sp)
+                            Text("${resolvedCount}✅  ${errorCount}❌", color = Color.White.copy(alpha = 0.6f), fontSize = 11.sp)
                             Text(
-                                "$resolvedCount / 8",
-                                color = if (resolvedCount == 8) Color(0xFF81C784) else Color(0xFFFFB74D),
+                                "${resolvedCount + errorCount} / 10",
+                                color = if (resolvedCount + errorCount == 10) Color(0xFF81C784) else Color(0xFFFFB74D),
                                 fontSize = 22.sp,
                                 fontWeight = FontWeight.Bold
                             )
@@ -371,12 +438,13 @@ fun StandardSampleScreen(activityStartMs: Long) {
                         Text("CrashReporter(400ms) → PushNotifications(500ms)", color = Color.White.copy(0.7f), fontSize = 11.sp, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
                         Text("DB(1200ms) + Config(600ms) → NetworkCache(500ms)", color = Color.White.copy(0.7f), fontSize = 11.sp, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
                         Text("ImageLoader(300ms)  [independent]", color = Color.White.copy(0.7f), fontSize = 11.sp, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
+                        Text("FailingSDK(300ms→💥) → DependentOnFailing(cascade❌)", color = Color(0xFFEF9A9A).copy(0.85f), fontSize = 11.sp, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
                     }
                 }
 
                 // ── Per-initializer cards ─────────────────────────────────
                 Text(
-                    "All 8 await() calls fired at Activity.onCreate() — before first frame",
+                    "All 10 await() calls fired at Activity.onCreate() — before first frame",
                     color = Color(0xFFFFB74D),
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Bold
@@ -384,6 +452,55 @@ fun StandardSampleScreen(activityStartMs: Long) {
 
                 statuses.forEach { status ->
                     InitializerCard(status)
+                }
+
+                // ── getOrNull() poll demo ─────────────────────────────────
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF1A1A26)),
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF64B5F6).copy(0.4f))
+                ) {
+                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("getOrNull() — non-blocking poll", color = Color(0xFF64B5F6), fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        Text(
+                            "Returns null immediately if not ready; no suspension, no blocking.",
+                            color = Color.White.copy(0.5f), fontSize = 10.sp
+                        )
+                        Text(
+                            if (getOrNullSnapshot == null) "getOrNull(Analytics) → null  ⏳ polling every 100ms…"
+                            else "getOrNull(Analytics) → \"${getOrNullSnapshot}\"",
+                            color = if (getOrNullSnapshot == null) Color(0xFFFFB74D) else Color(0xFF81C784),
+                            fontSize = 10.sp,
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                        )
+                    }
+                }
+
+                // ── Late-arrival await() demo ─────────────────────────────
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF1A1A26)),
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF64B5F6).copy(0.4f))
+                ) {
+                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("Late await() — cache hit", color = Color(0xFF64B5F6), fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        Text(
+                            "await() called 6 s after launch on an already-resolved initializer.",
+                            color = Color.White.copy(0.5f), fontSize = 10.sp
+                        )
+                        Text(
+                            when (lateArrivalMs) {
+                                null -> "await(ImageLoader) → waiting 6 s to fire…"
+                                0L   -> "await(ImageLoader) → resolved in < 1 ms  ✅ instant cache hit"
+                                else -> "await(ImageLoader) → resolved in ${lateArrivalMs} ms  ✅ instant cache hit"
+                            },
+                            color = if (lateArrivalMs != null) Color(0xFF81C784) else Color(0xFFFFB74D),
+                            fontSize = 10.sp,
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                        )
+                    }
                 }
 
                 // ── Post-frame background work total ─────────────────────
@@ -397,7 +514,7 @@ fun StandardSampleScreen(activityStartMs: Long) {
                             Text("Post-Frame Execution Summary", color = Color(0xFF81C784), fontWeight = FontWeight.Bold, fontSize = 12.sp)
                             MetricRow("TTFF (first frame)", "${metrics.ttffMs} ms")
                             MetricRow("Background work completed", "${metrics.initCompleteMs} ms")
-                            MetricRow("Initializers resolved", "${metrics.initializerCount}")
+                            MetricRow("Initializers registered", "${metrics.initializerCount} (${resolvedCount}✅ ${errorCount}❌)")
                             MetricRow("Cold start rate", "${String.format("%.1f", metrics.coldStartRate)}%")
                             MetricRow("Stable launches", "${metrics.stableLaunchCount}")
                         }
