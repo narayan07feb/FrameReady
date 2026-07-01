@@ -53,3 +53,10 @@ class CircularDependencyException(message: String) : RuntimeException(message)
  * Exception thrown when an initializer does not finish within its allocated timeout limit.
  */
 class InitializerTimeoutException(message: String) : RuntimeException(message)
+
+/**
+ * Exception thrown when an initializer was explicitly disabled via [FrameReady.disable] and
+ * a caller attempts to await its result. Dependents of a disabled initializer receive this
+ * exception via cascade failure.
+ */
+class DisabledInitializerException(message: String) : RuntimeException(message)

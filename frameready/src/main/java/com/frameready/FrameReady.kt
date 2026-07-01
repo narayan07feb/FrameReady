@@ -112,6 +112,16 @@ object FrameReady {
     var trampolineThresholdMs: Long = 500L
     val trampolineActivities = ConcurrentHashMap.newKeySet<Class<out Activity>>()
 
+    /**
+     * Timeout before triggering initializers for headless process starts (BroadcastReceiver,
+     * Service, etc.) where no Activity ever resumes. Defaults to 10 seconds.
+     */
+    var headlessTimeoutMs: Long = 10_000L
+
+    // Initializers explicitly disabled via disable() — skipped in runAll() and their
+    // deferreds are completed exceptionally so await() callers get DisabledInitializerException.
+    private val disabledInitializers = ConcurrentHashMap.newKeySet<Class<Any>>()
+
     // Trampoline activity tracking
     private val activityMap = ConcurrentHashMap<Activity, ActivityEntry>()
     private val activeActivitiesCount = AtomicInteger(0)
@@ -179,6 +189,15 @@ object FrameReady {
             if (isInstalled.compareAndSet(false, true)) {
                 // Register Activity Lifecycle callbacks to detect first frame & trampolines
                 registerLifecycleCallbacks(appContext)
+                // Headless process fallback: BroadcastReceiver/Service starts never trigger an
+                // Activity, so triggerFirstDraw() never fires. After headlessTimeoutMs with no
+                // Activity, run initializers in the background so await() callers don't hang.
+                handler.postDelayed({
+                    if (!hasTriggered.get()) {
+                        Log.i(TAG, "No Activity started within ${headlessTimeoutMs}ms — running initializers for headless process.")
+                        triggerBackgroundExecution(appContext)
+                    }
+                }, headlessTimeoutMs)
             } else {
                 Log.i(TAG, "Incrementally registered additional initializers. Total is now: ${initializers.size}")
             }
@@ -192,6 +211,28 @@ object FrameReady {
         // In the zero-config scenario/auto-install, this is handled by FrameReadyProvider
         Log.i(TAG, "Auto-installed via zero-config provider.")
     }
+
+    /**
+     * Excludes an initializer from post-frame execution. Must be called before the first
+     * frame is drawn (e.g. in Application.onCreate). Any pending await() on a disabled
+     * initializer will throw [DisabledInitializerException]; its dependents cascade-fail.
+     */
+    @Suppress("UNCHECKED_CAST")
+    fun disable(clazz: Class<out FrameReadyInitializer<*>>) {
+        if (hasTriggered.get()) {
+            Log.w(TAG, "disable() called after first frame — ${clazz.simpleName} already ran or is running.")
+            return
+        }
+        disabledInitializers.add(clazz as Class<Any>)
+        Log.i(TAG, "Disabled initializer: ${clazz.simpleName}")
+    }
+
+    /**
+     * Returns true if the given initializer was disabled via [disable].
+     */
+    @Suppress("UNCHECKED_CAST")
+    fun isDisabled(clazz: Class<out FrameReadyInitializer<*>>): Boolean =
+        disabledInitializers.contains(clazz as Class<Any>)
 
     /**
      * Retrieves the typed CompletableDeferred for an initializer.
@@ -508,6 +549,21 @@ object FrameReady {
 
     private fun runAll(context: Context, firstFrameTime: Long, activityName: String? = null) {
         val sorted = sortedInitializers ?: return
+
+        // Complete disabled initializers' deferreds so their await() callers get a clear error
+        // rather than hanging until timeout. Dependents cascade-fail naturally via depDeferred.await().
+        disabledInitializers.forEach { clazz ->
+            if (sorted.contains(clazz)) {
+                getDeferred<Any?>(clazz).completeExceptionally(
+                    DisabledInitializerException("${clazz.simpleName} was disabled via FrameReady.disable() and will not run.")
+                )
+                Log.i(TAG, "Skipping disabled initializer: ${clazz.simpleName}")
+            }
+        }
+
+        val active = if (disabledInitializers.isEmpty()) sorted
+                     else sorted.filter { !disabledInitializers.contains(it) }
+
         val ttff = firstFrameTime - appOnCreateTime
 
         val displayed = firstFrameTime - contentProviderStartTime
@@ -518,7 +574,7 @@ object FrameReady {
             initCompleteMs = 0L,
             trampolineSkipped = trampolineSkipCount.get() > 0,
             trampolineSkipCount = trampolineSkipCount.get(),
-            initializerCount = sorted.size,
+            initializerCount = active.size,
             stableLaunchCount = 0,
             ttffP50 = 0L,
             ttffP90 = 0L,
@@ -539,7 +595,7 @@ object FrameReady {
         }
 
         libraryScope.launch {
-            val jobs = sorted.map { clazz ->
+            val jobs = active.map { clazz ->
                 launch {
                     val deferred = getDeferred<Any?>(clazz)
                     try {
@@ -705,5 +761,6 @@ object FrameReady {
         globalAppContext = null
         coldLaunchCounted.set(false)
         firstActivityStartedInProcess.set(false)
+        disabledInitializers.clear()
     }
 }

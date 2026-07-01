@@ -418,6 +418,82 @@ class FrameReadyTest {
         )
     }
 
+    // ==========================================
+    // 13. DISABLE — per-initializer opt-out
+    // ==========================================
+
+    @Test
+    fun testDisabledInitializer_ThrowsDisabledInitializerException() = kotlinx.coroutines.runBlocking {
+        FrameReady.disable(TestInitA::class.java)
+        FrameReady.install(context, listOf(TestInitA::class.java as Class<Any>))
+
+        val app = context.applicationContext as Application
+        val callbacks = getRegisteredCallbacks(app)
+        val activity = Robolectric.buildActivity(Activity::class.java).get()
+        callbacks.onActivityCreated(activity, null)
+        callbacks.onActivityStarted(activity)
+        callbacks.onActivityResumed(activity)
+        shadowOf(Looper.getMainLooper()).idleFor(500, java.util.concurrent.TimeUnit.MILLISECONDS)
+
+        try {
+            FrameReady.await(TestInitA::class.java)
+            fail("Expected DisabledInitializerException")
+        } catch (e: Exception) {
+            assertTrue(
+                "Expected DisabledInitializerException but got ${e::class.java.simpleName}",
+                e is DisabledInitializerException
+            )
+        }
+    }
+
+    @Test
+    fun testDisabledInitializer_DependentCascadeFails() = kotlinx.coroutines.runBlocking {
+        // A is disabled; B depends on A — B should also fail
+        FrameReady.disable(TestInitA::class.java)
+        FrameReady.install(context, listOf(
+            TestInitA::class.java as Class<Any>,
+            TestInitB::class.java as Class<Any>
+        ))
+
+        val app = context.applicationContext as Application
+        val callbacks = getRegisteredCallbacks(app)
+        val activity = Robolectric.buildActivity(Activity::class.java).get()
+        callbacks.onActivityCreated(activity, null)
+        callbacks.onActivityStarted(activity)
+        callbacks.onActivityResumed(activity)
+        shadowOf(Looper.getMainLooper()).idleFor(500, java.util.concurrent.TimeUnit.MILLISECONDS)
+
+        try {
+            FrameReady.await(TestInitB::class.java)
+            fail("Expected cascade failure")
+        } catch (e: Exception) {
+            // B failed because its dependency A was disabled
+            assertNotNull(e.message)
+        }
+    }
+
+    @Test
+    fun testDisabledInitializer_IsDisabled_ReturnsTrue() {
+        FrameReady.disable(TestInitA::class.java)
+        assertTrue(FrameReady.isDisabled(TestInitA::class.java))
+    }
+
+    // ==========================================
+    // 14. HEADLESS PROCESS — no-Activity fallback
+    // ==========================================
+
+    @Test
+    fun testHeadlessProcess_RunsInitializersAfterTimeout() = kotlinx.coroutines.runBlocking {
+        FrameReady.headlessTimeoutMs = 200L  // short timeout for the test
+        FrameReady.install(context, listOf(TestInitA::class.java as Class<Any>))
+
+        // No Activity lifecycle callbacks fired — simulates BroadcastReceiver/Service start
+        shadowOf(Looper.getMainLooper()).idleFor(300, java.util.concurrent.TimeUnit.MILLISECONDS)
+
+        val result = FrameReady.await(TestInitA::class.java)
+        assertEquals("Result_A", result)
+    }
+
     private fun getRegisteredCallbacks(app: Application): Application.ActivityLifecycleCallbacks {
         val field = FrameReady::class.java.getDeclaredField("lifecycleCallbacks").apply {
             isAccessible = true
