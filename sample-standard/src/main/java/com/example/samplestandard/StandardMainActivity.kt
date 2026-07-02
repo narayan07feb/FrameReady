@@ -24,6 +24,8 @@ import com.frameready.ExecutionThread
 import com.frameready.FrameReady
 import com.frameready.FrameReadyInitializer
 import com.frameready.StartupMetrics
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -205,6 +207,23 @@ class StandardMainActivity : ComponentActivity() {
             FrameReady.metricsFlow.collect {
                 Log.i("FrameReady", "Metrics: ttff=${it.ttffMs}ms initializers=${it.initializerCount}")
             }
+        }
+
+        // Signal macrobenchmark timeToFullDisplay: fires when all 8 successful initializers complete.
+        // TTFD − TTID = "immediate access wait time" if a feature calls await() at first frame.
+        // runCatching absorbs FailingInitializer / DependentOnFailing so they don't block TTFD.
+        lifecycleScope.launch {
+            listOf(
+                async { runCatching { FrameReady.await(AnalyticsInitializer::class.java) } },
+                async { runCatching { FrameReady.await(CrashReporterInitializer::class.java) } },
+                async { runCatching { FrameReady.await(ImageLoaderInitializer::class.java) } },
+                async { runCatching { FrameReady.await(FeatureFlagsInitializer::class.java) } },
+                async { runCatching { FrameReady.await(PushNotificationInitializer::class.java) } },
+                async { runCatching { FrameReady.await(DatabaseInitializer::class.java) } },
+                async { runCatching { FrameReady.await(ConfigInitializer::class.java) } },
+                async { runCatching { FrameReady.await(NetworkCacheInitializer::class.java) } },
+            ).awaitAll()
+            reportFullyDrawn()
         }
 
         setContent { StandardSampleScreen(activityStartMs) }

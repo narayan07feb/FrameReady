@@ -26,9 +26,9 @@
             android:name="com.frameready.FrameReadyProvider"
             android:authorities="${applicationId}.frameready"
             android:exported="false">
-            <!-- Our post-frame initializer that integrates with Hilt -->
+            <!-- EncryptedStorageInitializer — DI dependencies provided via registerFactory() -->
             <meta-data
-                android:name="com.example.samplehilt.HiltPostFrameModuleInitializer"
+                android:name="com.example.samplehilt.EncryptedStorageInitializer"
                 android:value="post_frame_initializer" />
         </provider>
 

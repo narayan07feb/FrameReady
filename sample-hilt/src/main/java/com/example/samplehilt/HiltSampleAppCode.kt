@@ -6,10 +6,11 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Info
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -23,194 +24,158 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.frameready.FrameReady
 import com.frameready.FrameReadyInitializer
-import dagger.Binds
-import dagger.Component
 import dagger.Module
 import dagger.Provides
-import dagger.hilt.EntryPoint
-import dagger.hilt.EntryPoints
 import dagger.hilt.InstallIn
 import dagger.hilt.android.AndroidEntryPoint
 import dagger.hilt.android.HiltAndroidApp
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.components.SingletonComponent
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.filterNotNull
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 import javax.inject.Singleton
 
-// 1. Core Hilt Application Class
-@HiltAndroidApp
-class HiltSampleApplication : Application()
+// ─────────────────────────────────────────────────────────────────────────────
+// Two-sided DI bridge for FrameReady
+//
+// Problem: FrameReady initializers are instantiated via reflection (no-arg
+// constructor), so they can't receive injected constructor dependencies.
+// And consuming the result in the DI graph requires custom holder classes.
+//
+// Solution — two complementary APIs:
+//   registerFactory()  → inject DI dependencies INTO the initializer's create()
+//   asDeferred()       → inject the result OUT into the DI graph as Deferred<T>
+//
+// Before (5 boilerplate classes):
+//   AsyncStorageHolder + EncryptedSecretStorageProvider + HiltIntegrationModule
+//   + InitializerEntryPoint + storageProvider.getDeferred().await()
+//
+// After (two one-liners):
+//   FrameReady.registerFactory(...) { EncryptedStorageInitializer(keystoreManager) }
+//   FrameReady.asDeferred(EncryptedStorageInitializer::class.java)
+// ─────────────────────────────────────────────────────────────────────────────
 
-// 2. An Async service we want to initialize after the first frame
-class EncryptedSecretStorage(val masterKey: String) {
-    fun retrieveSecureData(): String {
-        return "SUCCESS-[DECRYPTED-WITH-KEY-$masterKey]"
-    }
+// ─── 1. DI-managed dependency provided by Hilt ───────────────────────────────
+class KeystoreManager @Inject constructor() {
+    fun getMasterKey(): String = "A9X9-D3E7-L300-K92B"
 }
 
+// ─── 2. Result type returned by the initializer ──────────────────────────────
+data class EncryptedStorage(val masterKey: String) {
+    fun retrieveSecureData(): String = "SUCCESS — DECRYPTED WITH KEY [$masterKey]"
+}
 
-// 3. A Singleton state holder managed by Hilt to store the instantiated service
-@Singleton
-class AsyncStorageHolder @Inject constructor() {
-    private val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Default + kotlinx.coroutines.SupervisorJob())
-    private val _storageFlow = MutableStateFlow<EncryptedSecretStorage?>(null)
-    val storageFlow: StateFlow<EncryptedSecretStorage?> = _storageFlow.asStateFlow()
+// ─── 3. Initializer ──────────────────────────────────────────────────────────
+//        No-arg constructor: used by FrameReady's sort/scan phase (before Hilt).
+//        Secondary constructor: receives DI deps provided by registerFactory().
+class EncryptedStorageInitializer : FrameReadyInitializer<EncryptedStorage> {
+    private var keystoreManager: KeystoreManager? = null
 
-    // Invoked post-frame by our FrameReady Initializer
-    fun initializeStorage(storage: EncryptedSecretStorage) {
-        _storageFlow.value = storage
-    }
+    constructor()                                                          // scan phase
+    constructor(keystoreManager: KeystoreManager) { this.keystoreManager = keystoreManager }
 
-    fun awaitStorageReadyDeferred(): kotlinx.coroutines.Deferred<EncryptedSecretStorage> {
-        val deferred = kotlinx.coroutines.CompletableDeferred<EncryptedSecretStorage>()
-        scope.launch {
-            val res = _storageFlow.filterNotNull().first()
-            deferred.complete(res)
+    override fun dependencies() = emptyList<Class<out FrameReadyInitializer<*>>>()
+
+    override suspend fun create(context: Context): EncryptedStorage {
+        val km = checkNotNull(keystoreManager) {
+            "Call FrameReady.registerFactory(EncryptedStorageInitializer::class.java) in Application.onCreate()"
         }
-        return deferred
-    }
-}
-
-// 4. An EntryPoint for Initializers because Initializers are created by Android's ContentProvider
-// and can't use constructor injection directly.
-@EntryPoint
-@InstallIn(SingletonComponent::class)
-interface InitializerEntryPoint {
-    fun storageHolder(): AsyncStorageHolder
-}
-
-// 5. FrameReadyInitializer that performs the asynchronous suspend loading
-class HiltPostFrameModuleInitializer : FrameReadyInitializer<EncryptedSecretStorage> {
-    
-    override suspend fun create(context: Context): EncryptedSecretStorage {
-        // A. Simulate reading encrypted keystore keys & doing heavy CPU key derivation
         delay(1500)
-        
-        val decryptedKey = "A9X9-D3E7-L300-K92B"
-        val storage = EncryptedSecretStorage(decryptedKey)
-
-        // B. Inject into the Hilt-managed singleton holder using our EntryPoint
-        val appContext = context.applicationContext
-        val entryPoint = EntryPoints.get(appContext, InitializerEntryPoint::class.java)
-        entryPoint.storageHolder().initializeStorage(storage)
-
-        return storage
+        return EncryptedStorage(km.getMasterKey())
     }
-
-    override fun dependencies(): List<Class<out FrameReadyInitializer<*>>> = emptyList()
 }
 
-// 5.1 Custom provider interface to avoid issues with raw Kotlin function types with continuation in KSP / Hilt
-interface EncryptedSecretStorageProvider {
-    fun getDeferred(): kotlinx.coroutines.Deferred<EncryptedSecretStorage>
+// ─── 4. Application: registerFactory() bridges Hilt → FrameReady ─────────────
+//        super.onCreate() triggers Hilt injection of @Inject fields.
+//        registerFactory() must be called before the first frame is drawn.
+@HiltAndroidApp
+class HiltSampleApplication : Application() {
+    @Inject lateinit var keystoreManager: KeystoreManager
+
+    override fun onCreate() {
+        super.onCreate()
+        // registerFactory: provide the DI-injected instance for create().
+        // No EntryPoint class, no holder singleton, no custom module needed.
+        FrameReady.registerFactory(EncryptedStorageInitializer::class.java) {
+            EncryptedStorageInitializer(keystoreManager)
+        }
+    }
 }
 
-// 6. Provide lazy or suspended providers in custom modules
+// ─── 5. Hilt module: asDeferred() bridges FrameReady → DI graph ──────────────
+//        Deferred<EncryptedStorage> is a stable @Singleton: same instance every call.
+//        Safe to call asDeferred() before install() — deferred completes post-frame.
 @Module
 @InstallIn(SingletonComponent::class)
-object HiltIntegrationModule {
-
-    // Pattern A (Deferred provider interface): Allow injecting 'EncryptedSecretStorageProvider' safely!
+object StorageModule {
     @Provides
     @Singleton
-    fun provideEncryptedSecretStorageProvider(
-        holder: AsyncStorageHolder
-    ): EncryptedSecretStorageProvider {
-        return object : EncryptedSecretStorageProvider {
-            override fun getDeferred(): kotlinx.coroutines.Deferred<EncryptedSecretStorage> {
-                return holder.awaitStorageReadyDeferred()
-            }
-        }
-    }
+    fun provideStorageDeferred(): Deferred<EncryptedStorage> =
+        FrameReady.asDeferred(EncryptedStorageInitializer::class.java)
 }
 
-// 7. Inject dependencies safely in ViewModels!
+// ─── 6. ViewModel: inject Deferred<EncryptedStorage>, zero FrameReady imports ─
+//        Unit tests: substitute with CompletableDeferred<EncryptedStorage>()
+//                    .apply { complete(fakeStorage) } — no FrameReady needed.
 @HiltViewModel
 class HiltSampleViewModel @Inject constructor(
-    private val storageHolder: AsyncStorageHolder,
-    private val storageProvider: EncryptedSecretStorageProvider // Injected using Pattern A
+    private val storageDeferred: Deferred<EncryptedStorage>
 ) : ViewModel() {
 
-    private val _statusText = MutableStateFlow("ViewModel initialized. Waiting for post-frame initialization...")
-    val statusText: StateFlow<String> = _statusText.asStateFlow()
-
-    private val _progress = MutableStateFlow(0f)
-    val progress: StateFlow<Float> = _progress.asStateFlow()
-
-    private val _decryptedData = MutableStateFlow("")
-    val decryptedData: StateFlow<String> = _decryptedData.asStateFlow()
-
-    private val _isCompleted = MutableStateFlow(false)
-    val isCompleted: StateFlow<Boolean> = _isCompleted.asStateFlow()
+    private val _phase   = MutableStateFlow("Waiting for post-frame init…")
+    private val _result  = MutableStateFlow<String?>(null)
+    private val _done    = MutableStateFlow(false)
+    val phase:  StateFlow<String>  = _phase.asStateFlow()
+    val result: StateFlow<String?> = _result.asStateFlow()
+    val done:   StateFlow<Boolean> = _done.asStateFlow()
 
     init {
-        // Enforce asynchronous waiting that doesn't block UI thread
         viewModelScope.launch {
-            val startTime = System.currentTimeMillis()
-            
-            // Simulating incremental loading phases
-            delay(300)
-            _statusText.value = "Phase 1: Booting system context (Hilt ready)..."
-            _progress.value = 0.2f
-            
-            delay(400)
-            _statusText.value = "Phase 2: Awaiting FrameReady post-draw callback..."
-            _progress.value = 0.4f
-            
-            // Wait for FrameReady.await() OR use the suspended provider injected by Hilt!
-            _statusText.value = "Phase 3: Suspended waiting on Post-Frame initializers..."
-            _progress.value = 0.6f
-            
-            val storage = storageProvider.getDeferred().await() // Awaits the post-frame initializer safely!
-            val duration = System.currentTimeMillis() - startTime
-            
-            _progress.value = 1.0f
-            _statusText.value = "System Fully Initialized (Complete inside: ${duration}ms)"
-            _decryptedData.value = storage.retrieveSecureData()
-            _isCompleted.value = true
+            _phase.value = "Suspended — awaiting Deferred<EncryptedStorage>…"
+            // Plain .await() on the injected Deferred.
+            // No FrameReady.await() call — no FrameReady import in this file.
+            val storage = storageDeferred.await()
+            _result.value = storage.retrieveSecureData()
+            _phase.value  = "Post-frame init complete"
+            _done.value   = true
         }
     }
 }
 
-// 8. Launcher Activity
+// ─── 7. Activity + UI ─────────────────────────────────────────────────────────
 @AndroidEntryPoint
 class HiltMainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent {
-            HiltSampleScreen()
-        }
+        setContent { HiltSampleScreen() }
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HiltSampleScreen(viewModel: HiltSampleViewModel = androidx.lifecycle.viewmodel.compose.viewModel()) {
-    val statusText by viewModel.statusText.collectAsState()
-    val progress by viewModel.progress.collectAsState()
-    val decryptedData by viewModel.decryptedData.collectAsState()
-    val isCompleted by viewModel.isCompleted.collectAsState()
+    val phase  by viewModel.phase.collectAsState()
+    val result by viewModel.result.collectAsState()
+    val done   by viewModel.done.collectAsState()
 
     MaterialTheme(
         colorScheme = darkColorScheme(
-            primary = Color(0xFFD0BCFF),
+            primary    = Color(0xFFD0BCFF),
             background = Color(0xFF141218),
-            surface = Color(0xFF211F26)
+            surface    = Color(0xFF211F26)
         )
     ) {
         Scaffold(
             topBar = {
                 TopAppBar(
-                    title = { Text("FrameReady: Hilt Integration", fontWeight = FontWeight.Bold) },
+                    title = { Text("FrameReady × Hilt", fontWeight = FontWeight.Bold) },
                     colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = Color(0xFF1D1B20),
+                        containerColor    = Color(0xFF1D1B20),
                         titleContentColor = Color.White
                     )
                 )
@@ -221,140 +186,110 @@ fun HiltSampleScreen(viewModel: HiltSampleViewModel = androidx.lifecycle.viewmod
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(padding)
-                    .padding(24.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
+                    .padding(24.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
-                // Informative header Card
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFF311111)),
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.padding(16.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Info,
-                            contentDescription = "Hilt info",
-                            tint = Color(0xFFFFB4AB),
-                            modifier = Modifier.size(32.dp)
-                        )
-                        Spacer(modifier = Modifier.width(16.dp))
-                        Column {
-                            Text(
-                                text = "Hilt & Suspend Co-existence",
-                                fontWeight = FontWeight.Bold,
-                                color = Color(0xFFFFD9D3),
-                                fontSize = 16.sp
-                            )
-                            Text(
-                                text = "Because constructor injection is synchronous, Hilt cannot natively inject suspended initializers. Instead, we inject a suspended provider 'suspend () -> T' that halts dependent coroutines without locking.",
-                                color = Color(0xFFFFD9D3).copy(alpha = 0.8f),
-                                fontSize = 13.sp
-                            )
-                        }
-                    }
-                }
 
-                Spacer(modifier = Modifier.height(8.dp))
-
-                // Progress state
-                Text(
-                    text = "ViewModel State Flow",
-                    color = Color.Gray,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 14.sp,
-                    modifier = Modifier.align(Alignment.Start)
+                // ── registerFactory() card ─────────────────────────────────
+                PatternCard(
+                    title = "1 · registerFactory() — inject INTO initializer",
+                    body  = "Provides DI-managed constructor args to create(). " +
+                            "Called in Application.onCreate() after Hilt injects @Inject fields.",
+                    code  = "// Application.onCreate()\n" +
+                            "FrameReady.registerFactory(\n" +
+                            "    EncryptedStorageInitializer::class.java\n" +
+                            ") { EncryptedStorageInitializer(keystoreManager) }",
+                    color = Color(0xFF311111)
                 )
 
+                // ── asDeferred() card ──────────────────────────────────────
+                PatternCard(
+                    title = "2 · asDeferred() — inject result OUT into DI graph",
+                    body  = "Returns a stable Deferred<T> that can be @Provides'd as a " +
+                            "@Singleton. Consumers inject Deferred<T> — no FrameReady imports.",
+                    code  = "// Hilt module\n" +
+                            "@Provides @Singleton\n" +
+                            "fun provideStorage(): Deferred<EncryptedStorage> =\n" +
+                            "    FrameReady.asDeferred(EncryptedStorageInitializer::class.java)\n\n" +
+                            "// ViewModel — zero FrameReady imports\n" +
+                            "class HomeVM @Inject constructor(\n" +
+                            "    private val storage: Deferred<EncryptedStorage>\n" +
+                            ") : ViewModel() {\n" +
+                            "    init { viewModelScope.launch { storage.await().use() } }\n" +
+                            "}",
+                    color = Color(0xFF11211E)
+                )
+
+                // ── Testability card ───────────────────────────────────────
+                PatternCard(
+                    title = "3 · Unit tests — no FrameReady wiring needed",
+                    body  = "Substitute the injected Deferred<T> with a pre-completed " +
+                            "CompletableDeferred. Tests are fully isolated from FrameReady.",
+                    code  = "val fakeStorage = EncryptedStorage(\"test-key\")\n" +
+                            "val fakeDeferred = CompletableDeferred(fakeStorage)\n" +
+                            "val vm = HiltSampleViewModel(fakeDeferred)\n" +
+                            "// vm.result is immediately available — no waiting",
+                    color = Color(0xFF1A1A26)
+                )
+
+                // ── Live phase ─────────────────────────────────────────────
                 Card(
                     modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFF211F26)),
-                    shape = RoundedCornerShape(10.dp)
+                    colors   = CardDefaults.cardColors(containerColor = Color(0xFF211F26)),
+                    shape    = RoundedCornerShape(10.dp)
                 ) {
-                    Column(
-                        modifier = Modifier.padding(20.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        Text(
-                            text = statusText,
-                            fontWeight = FontWeight.Medium,
-                            color = Color.White,
-                            fontSize = 14.sp
-                        )
-                        LinearProgressIndicator(
-                            progress = { progress },
-                            modifier = Modifier.fillMaxWidth(),
-                            color = Color(0xFFD0BCFF),
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text("Live ViewModel state", color = Color.White.copy(0.4f), fontSize = 11.sp)
+                        Text(phase, color = Color.White, fontWeight = FontWeight.Medium)
+                        if (!done) LinearProgressIndicator(
+                            modifier   = Modifier.fillMaxWidth(),
+                            color      = Color(0xFFD0BCFF),
                             trackColor = Color(0xFF49454F)
                         )
                     }
                 }
 
-                // Initialized Data Card
-                if (isCompleted) {
+                if (done && result != null) {
                     Card(
                         modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(containerColor = Color(0xFF1B5E20)),
-                        shape = RoundedCornerShape(10.dp)
+                        colors   = CardDefaults.cardColors(containerColor = Color(0xFF1B3A1B)),
+                        shape    = RoundedCornerShape(10.dp)
                     ) {
-                        Row(
-                            modifier = Modifier.padding(16.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.CheckCircle,
-                                tint = Color(0xFF81C784),
-                                contentDescription = "Active",
-                                modifier = Modifier.size(28.dp)
-                            )
-                            Spacer(modifier = Modifier.width(16.dp))
-                            Column {
-                                Text(
-                                    text = "Decrypted Credentials Loaded:",
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color.White,
-                                    fontSize = 12.sp
-                                )
-                                Text(
-                                    text = decryptedData,
-                                    fontFamily = FontFamily.Monospace,
-                                    fontWeight = FontWeight.Medium,
-                                    color = Color.White.copy(alpha = 0.9f),
-                                    fontSize = 13.sp
-                                )
-                            }
+                        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.CheckCircle, null, tint = Color(0xFF81C784), modifier = Modifier.size(22.dp))
+                            Spacer(Modifier.width(10.dp))
+                            Text(result!!, color = Color.White, fontFamily = FontFamily.Monospace, fontSize = 12.sp)
                         }
                     }
                 }
+            }
+        }
+    }
+}
 
-                Spacer(modifier = Modifier.weight(1.0f))
-
-                // Core implementation overview
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFF1D1B20))
-                ) {
-                    Column(
-                        modifier = Modifier.padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Text(
-                            text = "Design Patterns Showcase",
-                            color = Color(0xFFD0BCFF),
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 13.sp
-                        )
-                        Text(
-                            text = "1. Hilt injects custom 'EncryptedSecretStorageProvider' safely\n2. FrameReadyInitializer handles post-draw loading\n3. EntryPoint bridges the ContentProvider layer\n4. AsyncStorageHolder stores state safely as a StateFlow\n5. UI and ViewModel remain ultra-responsive during loading",
-                            fontFamily = FontFamily.Monospace,
-                            fontSize = 11.sp,
-                            color = Color.White.copy(alpha = 0.9f)
-                        )
-                    }
-                }
+@Composable
+private fun PatternCard(title: String, body: String, code: String, color: Color) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors   = CardDefaults.cardColors(containerColor = color),
+        shape    = RoundedCornerShape(12.dp)
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(title, color = Color(0xFFD0BCFF), fontWeight = FontWeight.Bold, fontSize = 13.sp)
+            Text(body, color = Color.White.copy(0.75f), fontSize = 12.sp)
+            Surface(
+                color    = Color.Black.copy(0.3f),
+                shape    = RoundedCornerShape(6.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    code,
+                    modifier   = Modifier.padding(10.dp),
+                    color      = Color(0xFFD0BCFF).copy(0.9f),
+                    fontSize   = 10.sp,
+                    fontFamily = FontFamily.Monospace
+                )
             }
         }
     }

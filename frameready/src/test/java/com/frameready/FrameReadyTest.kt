@@ -9,10 +9,13 @@ import androidx.test.core.app.ApplicationProvider
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Before
@@ -492,6 +495,179 @@ class FrameReadyTest {
 
         val result = FrameReady.await(TestInitA::class.java)
         assertEquals("Result_A", result)
+    }
+
+    // ==========================================
+    // 15. registerFactory() — DI bridge
+    // ==========================================
+
+    // A separate initializer used only in registerFactory tests so TestInitA stays final.
+    class FactoryTestInit : FrameReadyInitializer<String> {
+        override fun dependencies(): List<Class<out FrameReadyInitializer<*>>> = emptyList()
+        override suspend fun create(context: Context): String = "ReflectionResult"
+    }
+
+    @Test
+    fun testRegisterFactory_UsesFactoryInstanceForCreate() = kotlinx.coroutines.runBlocking {
+        val factoryInstance = object : FrameReadyInitializer<String> {
+            override fun dependencies(): List<Class<out FrameReadyInitializer<*>>> = emptyList()
+            override suspend fun create(context: Context): String = "FromFactory"
+        }
+        FrameReady.registerFactory(FactoryTestInit::class.java) { factoryInstance }
+        FrameReady.install(context, listOf(FactoryTestInit::class.java as Class<Any>))
+
+        val callbacks = getRegisteredCallbacks(context as Application)
+        val activity = Robolectric.buildActivity(Activity::class.java).get()
+        callbacks.onActivityCreated(activity, null)
+        callbacks.onActivityStarted(activity)
+        callbacks.onActivityResumed(activity)
+        shadowOf(Looper.getMainLooper()).idleFor(500, java.util.concurrent.TimeUnit.MILLISECONDS)
+
+        val result = FrameReady.await(FactoryTestInit::class.java)
+        assertEquals("FromFactory", result)
+    }
+
+    @Test
+    fun testRegisterFactory_EvictsReflectionInstanceOnRegistration() {
+        // Force a reflection-cached instance via install (which calls scan -> getInstance)
+        FrameReady.install(context, listOf(FactoryTestInit::class.java as Class<Any>))
+        val factoryInstance = object : FrameReadyInitializer<String> {
+            override fun dependencies(): List<Class<out FrameReadyInitializer<*>>> = emptyList()
+            override suspend fun create(context: Context): String = "FromFactory"
+        }
+        // After registerFactory the cache should be evicted, so factory is used on next getInstance
+        FrameReady.registerFactory(FactoryTestInit::class.java) { factoryInstance }
+        // Verify via reflection that initializerInstances no longer holds the old reflection instance
+        val instancesField = FrameReady::class.java.getDeclaredField("initializerInstances").apply { isAccessible = true }
+        @Suppress("UNCHECKED_CAST")
+        val instances = instancesField.get(null) as java.util.concurrent.ConcurrentHashMap<Class<*>, *>
+        assertNull(instances[FactoryTestInit::class.java])
+    }
+
+    // ==========================================
+    // 16. asDeferred() — DI consumption bridge
+    // ==========================================
+
+    @Test
+    fun testAsDeferred_ReturnsSameInstanceAsAwait() = kotlinx.coroutines.runBlocking {
+        FrameReady.install(context, listOf(TestInitA::class.java as Class<Any>))
+
+        val deferred = FrameReady.asDeferred(TestInitA::class.java)
+
+        val callbacks = getRegisteredCallbacks(context as Application)
+        val activity = Robolectric.buildActivity(Activity::class.java).get()
+        callbacks.onActivityCreated(activity, null)
+        callbacks.onActivityStarted(activity)
+        callbacks.onActivityResumed(activity)
+        shadowOf(Looper.getMainLooper()).idleFor(500, java.util.concurrent.TimeUnit.MILLISECONDS)
+
+        // The deferred returned by asDeferred() should complete with the same result as await()
+        assertEquals("Result_A", deferred.await())
+    }
+
+    @Test
+    fun testAsDeferred_IsStableSingleton() {
+        // Same Deferred<T> instance returned on every call — safe to bind as @Singleton in DI
+        val d1 = FrameReady.asDeferred(TestInitA::class.java)
+        val d2 = FrameReady.asDeferred(TestInitA::class.java)
+        assertSame(d1, d2)
+    }
+
+    @Test
+    fun testAsDeferred_CanBeCalledBeforeInstall() = kotlinx.coroutines.runBlocking {
+        // asDeferred() is safe to call in a Hilt module before install() runs
+        val deferred = FrameReady.asDeferred(TestInitA::class.java)
+
+        // install() wires up the initializer after asDeferred() was called
+        FrameReady.install(context, listOf(TestInitA::class.java as Class<Any>))
+
+        val callbacks = getRegisteredCallbacks(context as Application)
+        val activity = Robolectric.buildActivity(Activity::class.java).get()
+        callbacks.onActivityCreated(activity, null)
+        callbacks.onActivityStarted(activity)
+        callbacks.onActivityResumed(activity)
+        shadowOf(Looper.getMainLooper()).idleFor(500, java.util.concurrent.TimeUnit.MILLISECONDS)
+
+        // Deferred obtained before install() still completes correctly
+        assertEquals("Result_A", deferred.await())
+    }
+
+    // ─── await() fail-fast ────────────────────────────────────────────────────────
+
+    @Test
+    fun testAwait_ThrowsIllegalStateException_WhenClassNotInstalled() = runTest {
+        // install() with TestInitA — TestInitB is never registered
+        FrameReady.install(context, listOf(TestInitA::class.java as Class<Any>))
+        try {
+            FrameReady.await(TestInitB::class.java)
+            fail("Expected IllegalStateException for unregistered class")
+        } catch (e: IllegalStateException) {
+            assertTrue("Message should name the class", e.message?.contains("TestInitB") == true)
+        }
+    }
+
+    // ─── asStateFlow ──────────────────────────────────────────────────────────────
+
+    @Test
+    fun testAsStateFlow_EmitsNullThenResult() = kotlinx.coroutines.runBlocking {
+        FrameReady.install(context, listOf(TestInitA::class.java as Class<Any>))
+        val flow = FrameReady.asStateFlow(TestInitA::class.java)
+
+        // Before first frame the flow must be null
+        assertNull(flow.value)
+
+        // Fire the first frame lifecycle
+        val callbacks = getRegisteredCallbacks(context as Application)
+        val activity = Robolectric.buildActivity(Activity::class.java).get()
+        callbacks.onActivityCreated(activity, null)
+        callbacks.onActivityStarted(activity)
+        callbacks.onActivityResumed(activity)
+        shadowOf(Looper.getMainLooper()).idleFor(500, java.util.concurrent.TimeUnit.MILLISECONDS)
+
+        // Collect the first non-null emission (with a 2s timeout to avoid hanging if broken)
+        val result = kotlinx.coroutines.withTimeout(2000L) {
+            flow.filterNotNull().first()
+        }
+        assertEquals("Result_A", result)
+    }
+
+    @Test
+    fun testAsStateFlow_IsStableSingleton() {
+        val f1 = FrameReady.asStateFlow(TestInitA::class.java)
+        val f2 = FrameReady.asStateFlow(TestInitA::class.java)
+        assertSame(f1, f2)
+    }
+
+    // ─── retry ────────────────────────────────────────────────────────────────────
+
+    @Test
+    fun testRetry_ThrowsWhenClassNotInstalled() {
+        FrameReady.install(context, listOf(TestInitA::class.java as Class<Any>))
+        try {
+            FrameReady.retry(TestInitB::class.java)
+            fail("Expected IllegalStateException for unregistered class")
+        } catch (e: IllegalStateException) {
+            assertTrue(e.message?.contains("TestInitB") == true)
+        }
+    }
+
+    @Test
+    fun testRetry_ResetsCompletedDeferred() = kotlinx.coroutines.runBlocking {
+        FrameReady.install(context, listOf(TestInitA::class.java as Class<Any>))
+        val callbacks = getRegisteredCallbacks(context as Application)
+        val activity = Robolectric.buildActivity(Activity::class.java).get()
+        callbacks.onActivityCreated(activity, null)
+        callbacks.onActivityStarted(activity)
+        callbacks.onActivityResumed(activity)
+        shadowOf(Looper.getMainLooper()).idleFor(500, java.util.concurrent.TimeUnit.MILLISECONDS)
+
+        // await() is the only reliable way to confirm completion on Dispatchers.Default
+        val first = FrameReady.await(TestInitA::class.java, timeoutMs = 2000L)
+        assertEquals("Result_A", first)
+
+        // retry() replaces the deferred — getOrNull() returns null again immediately
+        FrameReady.retry(TestInitA::class.java)
+        assertNull(FrameReady.getOrNull(TestInitA::class.java))
     }
 
     private fun getRegisteredCallbacks(app: Application): Application.ActivityLifecycleCallbacks {

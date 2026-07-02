@@ -16,6 +16,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
@@ -23,7 +24,9 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.channels.BufferOverflow
 import java.lang.ref.WeakReference
@@ -62,6 +65,10 @@ object FrameReady {
     private val resultMap = ConcurrentHashMap<Class<Any>, CompletableDeferred<Any?>>()
     private val initializers = ConcurrentHashMap.newKeySet<Class<Any>>()
     private val initializerInstances = ConcurrentHashMap<Class<Any>, FrameReadyInitializer<Any?>>()
+    // DI-framework factories — override reflection instantiation for create() only
+    private val initializerFactories = ConcurrentHashMap<Class<Any>, () -> FrameReadyInitializer<Any?>>()
+    // Per-initializer StateFlow cache — same instance returned on every asStateFlow() call
+    private val stateFlows = ConcurrentHashMap<Class<Any>, MutableStateFlow<Any?>>()
     
     private val isInstalled = AtomicBoolean(false)
     private val hasTriggered = AtomicBoolean(false)
@@ -117,6 +124,20 @@ object FrameReady {
      * Service, etc.) where no Activity ever resumes. Defaults to 10 seconds.
      */
     var headlessTimeoutMs: Long = 10_000L
+
+    /**
+     * Optional predicate for detecting notification-originated launches.
+     * When set, replaces the built-in heuristic that checks for `"notification_id"` /
+     * `"from_notification"` extras. Set this in [Application.onCreate] to match your
+     * app's actual notification intent contract (FCM data keys, custom action strings, etc.).
+     *
+     * ```kotlin
+     * FrameReady.notificationOriginChecker = { intent ->
+     *     intent.hasExtra("fcm_notification_id") || intent.getStringExtra("source") == "push"
+     * }
+     * ```
+     */
+    var notificationOriginChecker: ((Intent) -> Boolean)? = null
 
     // Initializers explicitly disabled via disable() — skipped in runAll() and their
     // deferreds are completed exceptionally so await() callers get DisabledInitializerException.
@@ -236,16 +257,164 @@ object FrameReady {
 
     /**
      * Retrieves the typed CompletableDeferred for an initializer.
+     * Internal — use [asDeferred] for the public read-only [Deferred] surface.
      */
     @Suppress("UNCHECKED_CAST")
-    fun <T> getDeferred(clazz: Class<Any>): CompletableDeferred<T> {
+    internal fun <T> getDeferred(clazz: Class<Any>): CompletableDeferred<T> {
         return resultMap.getOrPut(clazz) { CompletableDeferred() } as CompletableDeferred<T>
+    }
+
+    /**
+     * Returns a [Deferred] that completes when [clazz]'s initializer finishes.
+     *
+     * Use this to bridge a FrameReady result into a DI graph (Hilt, Koin, Dagger)
+     * as a stable `@Singleton` binding — no custom holder class or provider interface needed:
+     *
+     * ```kotlin
+     * // Hilt module — one @Provides per FrameReady-managed type
+     * @Provides @Singleton
+     * fun analyticsDeferred(): Deferred<AnalyticsSDK> =
+     *     FrameReady.asDeferred(AnalyticsInitializer::class.java)
+     *
+     * // ViewModel — inject and await naturally; no FrameReady imports required
+     * @HiltViewModel
+     * class HomeViewModel @Inject constructor(
+     *     private val analytics: Deferred<AnalyticsSDK>
+     * ) : ViewModel() {
+     *     init { viewModelScope.launch { analytics.await().track("screen_view") } }
+     * }
+     * ```
+     *
+     * The returned [Deferred] is the same stable instance on every call for [clazz], so
+     * binding it as a `@Singleton` is safe. It can be called before [install]; the deferred
+     * completes automatically once the initializer runs post-frame.
+     *
+     * Pair with [registerFactory] to also inject DI-managed dependencies INTO the initializer.
+     *
+     * In unit tests, substitute with `CompletableDeferred<T>().apply { complete(fakeValue) }`.
+     */
+    @Suppress("UNCHECKED_CAST")
+    fun <T, C : FrameReadyInitializer<T>> asDeferred(clazz: Class<C>): Deferred<T> =
+        getDeferred<T>(clazz as Class<Any>)
+
+    /**
+     * Returns a [StateFlow] that emits `null` while the initializer is pending, then emits its
+     * result once complete. Ideal for Compose screens that want to `collectAsState()` on
+     * a specific initializer's readiness without a ViewModel intermediary:
+     *
+     * ```kotlin
+     * @Composable fun HomeScreen() {
+     *     val analytics by remember { FrameReady.asStateFlow(AnalyticsInitializer::class.java) }
+     *         .collectAsState()
+     *     if (analytics != null) TrackingEnabled()
+     * }
+     * ```
+     *
+     * The same [StateFlow] instance is returned on every call for a given [clazz] (cached),
+     * so it is safe to bind as a `@Singleton` in DI or call repeatedly in Compose `remember`.
+     */
+    @Suppress("UNCHECKED_CAST")
+    fun <T, C : FrameReadyInitializer<T>> asStateFlow(clazz: Class<C>): StateFlow<T?> {
+        return stateFlows.getOrPut(clazz as Class<Any>) {
+            val state = MutableStateFlow<Any?>(getOrNull(clazz))
+            if (state.value == null) {
+                libraryScope.launch {
+                    // runCatching: a failed initializer leaves the StateFlow as null
+                    runCatching { await(clazz) }.getOrNull()?.let { state.value = it }
+                }
+            }
+            state
+        } as StateFlow<T?>
+    }
+
+    /**
+     * Re-runs a failed or completed initializer, replacing its previous result.
+     *
+     * Useful for network-dependent initializers (FCM registration, remote config fetch) that
+     * failed on flaky connectivity. Dependents of the retried initializer are NOT automatically
+     * re-run — call [retry] on them separately if needed.
+     *
+     * Calling [retry] on an initializer that is still running is a no-op.
+     */
+    @Suppress("UNCHECKED_CAST")
+    fun retry(clazz: Class<out FrameReadyInitializer<*>>) {
+        val classKey = clazz as Class<Any>
+        if (!initializers.contains(classKey)) {
+            throw IllegalStateException(
+                "${clazz.simpleName} was never registered with FrameReady. " +
+                "Check AndroidManifest.xml or FrameReady.install()."
+            )
+        }
+        val existing = resultMap[classKey]
+        if (existing != null && !existing.isCompleted) {
+            Log.w(TAG, "retry() ignored — ${clazz.simpleName} is still running.")
+            return
+        }
+        // Replace the deferred so waiting callers receive the new result
+        resultMap[classKey] = CompletableDeferred()
+        // Reset the StateFlow back to null so observers reflect the pending state
+        stateFlows[classKey]?.value = null
+        val ctx = globalAppContext ?: run {
+            Log.e(TAG, "retry() called before any Context was available — ignoring.")
+            return
+        }
+        libraryScope.launch {
+            val deferred = getDeferred<Any?>(classKey)
+            try {
+                val instance = getInstance(classKey)
+                val dispatcher = when (instance.executionThread()) {
+                    ExecutionThread.BACKGROUND -> Dispatchers.IO
+                    ExecutionThread.MAIN -> Dispatchers.Main
+                }
+                val timeout = instance.timeoutMs()
+                val result = if (timeout > 0 && timeout < Long.MAX_VALUE) {
+                    try {
+                        kotlinx.coroutines.withTimeout(timeout) {
+                            kotlinx.coroutines.withContext(dispatcher) { instance.create(ctx) }
+                        }
+                    } catch (te: kotlinx.coroutines.TimeoutCancellationException) {
+                        throw InitializerTimeoutException(
+                            "${clazz.simpleName} timed out after ${timeout}ms on retry."
+                        )
+                    }
+                } else {
+                    kotlinx.coroutines.withContext(dispatcher) { instance.create(ctx) }
+                }
+                deferred.complete(result)
+                stateFlows[classKey]?.value = result
+                Log.i(TAG, "Retry succeeded: ${clazz.simpleName}")
+            } catch (e: Throwable) {
+                Log.e(TAG, "Retry failed: ${clazz.name}", e)
+                deferred.completeExceptionally(e)
+            }
+        }
+    }
+
+    /**
+     * Registers a factory that FrameReady calls to instantiate [clazz] for its [create] call.
+     * Use this to inject DI-managed dependencies (Hilt, Koin, Dagger) into an initializer
+     * without EntryPoint boilerplate. Must be called before the first frame, e.g.
+     * in [Application.onCreate] after the DI container is ready.
+     *
+     * The initializer class still needs a no-arg constructor so FrameReady can read
+     * [FrameReadyInitializer.dependencies] during the sort phase (before DI is available).
+     */
+    @Suppress("UNCHECKED_CAST")
+    fun <T> registerFactory(
+        clazz: Class<out FrameReadyInitializer<T>>,
+        factory: () -> FrameReadyInitializer<T>
+    ) {
+        initializerFactories[clazz as Class<Any>] = factory as () -> FrameReadyInitializer<Any?>
+        // Evict any reflection-cached instance so the factory is used for create()
+        initializerInstances.remove(clazz as Class<Any>)
     }
 
     @Suppress("UNCHECKED_CAST")
     private fun getInstance(clazz: Class<Any>): FrameReadyInitializer<Any?> {
         return initializerInstances.getOrPut(clazz) {
-            clazz.getDeclaredConstructor().newInstance() as FrameReadyInitializer<Any?>
+            val factory = initializerFactories[clazz]
+            if (factory != null) factory()
+            else clazz.getDeclaredConstructor().newInstance() as FrameReadyInitializer<Any?>
         }
     }
 
@@ -288,6 +457,14 @@ object FrameReady {
         timeoutMs: Long = 5000L
     ): T {
         @Suppress("UNCHECKED_CAST")
+        // Fail fast: if install() has run but this class was never registered, a silent 5s
+        // timeout is the worst debugging experience. Throw immediately instead.
+        if (initializers.isNotEmpty() && !initializers.contains(clazz as Class<Any>)) {
+            throw IllegalStateException(
+                "${clazz.simpleName} was never registered with FrameReady. " +
+                "Add it to AndroidManifest.xml or pass it to FrameReady.install()."
+            )
+        }
         val deferred = getDeferred<T>(clazz as Class<Any>)
         try {
             return withTimeout(timeoutMs) {
@@ -475,9 +652,10 @@ object FrameReady {
     private fun isNotificationOriginated(activity: Activity): Boolean {
         val intent = activity.intent ?: return false
         return try {
-            intent.hasExtra("notification_id") || 
-            intent.hasExtra("from_notification") || 
-            intent.action?.contains("NOTIFICATION") == true
+            notificationOriginChecker?.invoke(intent)
+                ?: (intent.hasExtra("notification_id") ||
+                   intent.hasExtra("from_notification") ||
+                   intent.action?.contains("NOTIFICATION") == true)
         } catch (e: Exception) {
             // Protect against BadParcelableException from external intents
             false
@@ -762,5 +940,8 @@ object FrameReady {
         coldLaunchCounted.set(false)
         firstActivityStartedInProcess.set(false)
         disabledInitializers.clear()
+        initializerFactories.clear()
+        stateFlows.clear()
+        notificationOriginChecker = null
     }
 }
