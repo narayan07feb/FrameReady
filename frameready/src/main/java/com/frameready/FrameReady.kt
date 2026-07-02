@@ -350,8 +350,11 @@ object FrameReady {
             Log.w(TAG, "retry() ignored — ${clazz.simpleName} is still running.")
             return
         }
-        // Replace the deferred so waiting callers receive the new result
-        resultMap[classKey] = CompletableDeferred()
+        // Capture the fresh deferred HERE (not inside the coroutine). If resetAllForTesting()
+        // is called before the coroutine starts, the stale coroutine will only complete this
+        // orphaned instance — it will never touch the next test's resultMap.
+        val freshDeferred = CompletableDeferred<Any?>()
+        resultMap[classKey] = freshDeferred
         // Reset the StateFlow back to null so observers reflect the pending state
         stateFlows[classKey]?.value = null
         val ctx = globalAppContext ?: run {
@@ -359,7 +362,6 @@ object FrameReady {
             return
         }
         libraryScope.launch {
-            val deferred = getDeferred<Any?>(classKey)
             try {
                 val instance = getInstance(classKey)
                 val dispatcher = when (instance.executionThread()) {
@@ -380,12 +382,12 @@ object FrameReady {
                 } else {
                     kotlinx.coroutines.withContext(dispatcher) { instance.create(ctx) }
                 }
-                deferred.complete(result)
+                freshDeferred.complete(result)
                 stateFlows[classKey]?.value = result
                 Log.i(TAG, "Retry succeeded: ${clazz.simpleName}")
             } catch (e: Throwable) {
                 Log.e(TAG, "Retry failed: ${clazz.name}", e)
-                deferred.completeExceptionally(e)
+                freshDeferred.completeExceptionally(e)
             }
         }
     }
