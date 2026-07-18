@@ -57,7 +57,7 @@ import javax.inject.Singleton
 //
 // After (two one-liners):
 //   FrameReady.registerFactory(...) { EncryptedStorageInitializer(keystoreManager) }
-//   FrameReady.asDeferred(EncryptedStorageInitializer::class.java)
+//   FrameReady.asDeferred(EncryptedStorageInitializer::class)
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ─── 1. DI-managed dependency provided by Hilt ───────────────────────────────
@@ -79,11 +79,11 @@ class EncryptedStorageInitializer : FrameReadyInitializer<EncryptedStorage> {
     constructor()                                                          // scan phase
     constructor(keystoreManager: KeystoreManager) { this.keystoreManager = keystoreManager }
 
-    override fun dependencies() = emptyList<Class<out FrameReadyInitializer<*>>>()
+    override fun dependencies() = emptyList<kotlin.reflect.KClass<out FrameReadyInitializer<*>>>()
 
     override suspend fun create(context: Context): EncryptedStorage {
         val km = checkNotNull(keystoreManager) {
-            "Call FrameReady.registerFactory(EncryptedStorageInitializer::class.java) in Application.onCreate()"
+            "Call FrameReady.registerFactory(EncryptedStorageInitializer::class) in Application.onCreate()"
         }
         delay(1500)
         return EncryptedStorage(km.getMasterKey())
@@ -101,7 +101,7 @@ class HiltSampleApplication : Application() {
         super.onCreate()
         // registerFactory: provide the DI-injected instance for create().
         // No EntryPoint class, no holder singleton, no custom module needed.
-        FrameReady.registerFactory(EncryptedStorageInitializer::class.java) {
+        FrameReady.registerFactory(EncryptedStorageInitializer::class) {
             EncryptedStorageInitializer(keystoreManager)
         }
     }
@@ -116,7 +116,7 @@ object StorageModule {
     @Provides
     @Singleton
     fun provideStorageDeferred(): Deferred<EncryptedStorage> =
-        FrameReady.asDeferred(EncryptedStorageInitializer::class.java)
+        FrameReady.asDeferred(EncryptedStorageInitializer::class)
 }
 
 // ─── 6. ViewModel: inject Deferred<EncryptedStorage>, zero FrameReady imports ─
@@ -211,7 +211,7 @@ fun HiltSampleScreen(viewModel: HiltSampleViewModel = androidx.lifecycle.viewmod
                     code  = "// Hilt module\n" +
                             "@Provides @Singleton\n" +
                             "fun provideStorage(): Deferred<EncryptedStorage> =\n" +
-                            "    FrameReady.asDeferred(EncryptedStorageInitializer::class.java)\n\n" +
+                            "    FrameReady.asDeferred(EncryptedStorageInitializer::class)\n\n" +
                             "// ViewModel — zero FrameReady imports\n" +
                             "class HomeVM @Inject constructor(\n" +
                             "    private val storage: Deferred<EncryptedStorage>\n" +

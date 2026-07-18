@@ -29,7 +29,7 @@ class NotificationFastInitializer : FrameReadyInitializer<String> {
         return "Route_Telemetry_Active"
     }
 
-    override fun dependencies(): List<Class<out FrameReadyInitializer<*>>> = emptyList()
+    override fun dependencies(): List<kotlin.reflect.KClass<out FrameReadyInitializer<*>>> = emptyList()
 }
 
 // 2. Main Launcher Dashboard
@@ -176,7 +176,7 @@ fun TargetScreen(isNotificationOriginated: Boolean) {
     LaunchedEffect(Unit) {
         val startTime = System.currentTimeMillis()
         try {
-            val result = FrameReady.await(NotificationFastInitializer::class.java)
+            val result = FrameReady.await(NotificationFastInitializer::class)
             val duration = System.currentTimeMillis() - startTime
             statusText = "Telemetry: $result (Complete in ${duration}ms)"
             isReady = true

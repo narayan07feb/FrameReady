@@ -34,6 +34,8 @@ include(":sample-notification")
 include(":sample-hilt")
 include(":sample-appstartup")
 include(":sample-appcls-init")
+include(":shared-ui")
+include(":sample-ios")
 include(":benchmark")
 
 

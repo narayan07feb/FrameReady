@@ -48,7 +48,7 @@ object SampleKoinModules {
  */
 class KoinFrameReadyInitializer : FrameReadyInitializer<Boolean> {
     
-    override fun dependencies(): List<Class<out FrameReadyInitializer<*>>> {
+    override fun dependencies(): List<kotlin.reflect.KClass<out FrameReadyInitializer<*>>> {
         return emptyList()
     }
 
@@ -103,7 +103,7 @@ class KoinFrameReadyInitializer : FrameReadyInitializer<Boolean> {
  *     fun provideAsyncDatabase(): suspend () -> SQLiteDatabase {
  *         return {
  *             // Await the asynchronous FrameReady initialization sequence
- *             FrameReady.await(DatabaseInitializer::class.java)
+ *             FrameReady.await(DatabaseInitializer::class)
  *         }
  *     }
  * }
@@ -169,7 +169,7 @@ object HiltDatabaseModule {
     // @Singleton
     // fun provideAsyncDatabaseStub(): suspend () -> Any {
     //     return {
-    //         FrameReady.await(DatabaseFrameReadyInitializer::class.java)
+    //         FrameReady.await(DatabaseFrameReadyInitializer::class)
     //     }
     // }
 }
@@ -180,7 +180,7 @@ object HiltDatabaseModule {
  */
 class DatabaseFrameReadyInitializer : FrameReadyInitializer<Any> {
     
-    override fun dependencies(): List<Class<out FrameReadyInitializer<*>>> {
+    override fun dependencies(): List<kotlin.reflect.KClass<out FrameReadyInitializer<*>>> {
         return emptyList()
     }
 
@@ -225,10 +225,10 @@ class SafeConsumerViewModel {
                 android.util.Log.i("SafeConsumer", "SafeConsumer initialized. Checking dependencies...")
                 
                 // 1. Wait until Koin graph has fully started
-                FrameReady.await(KoinFrameReadyInitializer::class.java)
+                FrameReady.await(KoinFrameReadyInitializer::class)
                 
                 // 2. Wait until Hilt Database Async loader is complete 
-                FrameReady.await(DatabaseFrameReadyInitializer::class.java)
+                FrameReady.await(DatabaseFrameReadyInitializer::class)
                 
                 android.util.Log.i("SafeConsumer", "All dependencies are ready and loaded! Executing business code...")
                 

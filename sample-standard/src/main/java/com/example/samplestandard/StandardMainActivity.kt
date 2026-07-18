@@ -34,7 +34,7 @@ import kotlinx.coroutines.launch
 // Simulates Firebase Analytics / Amplitude init
 // ─────────────────────────────────────────────
 class AnalyticsInitializer : FrameReadyInitializer<String> {
-    override fun dependencies() = emptyList<Class<out FrameReadyInitializer<*>>>()
+    override fun dependencies() = emptyList<kotlin.reflect.KClass<out FrameReadyInitializer<*>>>()
     override fun executionThread() = ExecutionThread.BACKGROUND
     override suspend fun create(context: android.content.Context): String {
         delay(800)
@@ -47,7 +47,7 @@ class AnalyticsInitializer : FrameReadyInitializer<String> {
 // Simulates Crashlytics / Sentry init
 // ─────────────────────────────────────────────
 class CrashReporterInitializer : FrameReadyInitializer<String> {
-    override fun dependencies() = emptyList<Class<out FrameReadyInitializer<*>>>()
+    override fun dependencies() = emptyList<kotlin.reflect.KClass<out FrameReadyInitializer<*>>>()
     override fun executionThread() = ExecutionThread.BACKGROUND
     override suspend fun create(context: android.content.Context): String {
         delay(400)
@@ -60,7 +60,7 @@ class CrashReporterInitializer : FrameReadyInitializer<String> {
 // Simulates Coil / Glide disk-cache warm-up
 // ─────────────────────────────────────────────
 class ImageLoaderInitializer : FrameReadyInitializer<String> {
-    override fun dependencies() = emptyList<Class<out FrameReadyInitializer<*>>>()
+    override fun dependencies() = emptyList<kotlin.reflect.KClass<out FrameReadyInitializer<*>>>()
     override fun executionThread() = ExecutionThread.BACKGROUND
     override suspend fun create(context: android.content.Context): String {
         delay(300)
@@ -74,10 +74,10 @@ class ImageLoaderInitializer : FrameReadyInitializer<String> {
 // Requires analytics session ID to tag experiments
 // ─────────────────────────────────────────────
 class FeatureFlagsInitializer : FrameReadyInitializer<Map<String, Boolean>> {
-    override fun dependencies() = listOf(AnalyticsInitializer::class.java)
+    override fun dependencies() = listOf(AnalyticsInitializer::class)
     override fun executionThread() = ExecutionThread.BACKGROUND
     override suspend fun create(context: android.content.Context): Map<String, Boolean> {
-        val session = FrameReady.getOrNull(AnalyticsInitializer::class.java) ?: "unknown"
+        val session = FrameReady.getOrNull(AnalyticsInitializer::class) ?: "unknown"
         delay(600)
         return mapOf(
             "new_checkout_ui" to true,
@@ -94,7 +94,7 @@ class FeatureFlagsInitializer : FrameReadyInitializer<Map<String, Boolean>> {
 // Crash reporter must be active before registering push token
 // ─────────────────────────────────────────────
 class PushNotificationInitializer : FrameReadyInitializer<String> {
-    override fun dependencies() = listOf(CrashReporterInitializer::class.java)
+    override fun dependencies() = listOf(CrashReporterInitializer::class)
     override fun executionThread() = ExecutionThread.BACKGROUND
     override suspend fun create(context: android.content.Context): String {
         delay(500)
@@ -106,7 +106,7 @@ class PushNotificationInitializer : FrameReadyInitializer<String> {
 // INITIALIZER 6 — Database (no deps, existing)
 // ─────────────────────────────────────────────
 class DatabaseInitializer : FrameReadyInitializer<String> {
-    override fun dependencies() = emptyList<Class<out FrameReadyInitializer<*>>>()
+    override fun dependencies() = emptyList<kotlin.reflect.KClass<out FrameReadyInitializer<*>>>()
     override fun executionThread() = ExecutionThread.BACKGROUND
     override suspend fun create(context: android.content.Context): String {
         delay(1200)
@@ -118,7 +118,7 @@ class DatabaseInitializer : FrameReadyInitializer<String> {
 // INITIALIZER 7 — Remote Config (no deps, existing)
 // ─────────────────────────────────────────────
 class ConfigInitializer : FrameReadyInitializer<Map<String, String>> {
-    override fun dependencies() = emptyList<Class<out FrameReadyInitializer<*>>>()
+    override fun dependencies() = emptyList<kotlin.reflect.KClass<out FrameReadyInitializer<*>>>()
     override fun executionThread() = ExecutionThread.BACKGROUND
     override suspend fun create(context: android.content.Context): Map<String, String> {
         delay(600)
@@ -132,12 +132,12 @@ class ConfigInitializer : FrameReadyInitializer<Map<String, String>> {
 // ─────────────────────────────────────────────
 class NetworkCacheInitializer : FrameReadyInitializer<String> {
     override fun dependencies() = listOf(
-        DatabaseInitializer::class.java,
-        ConfigInitializer::class.java
+        DatabaseInitializer::class,
+        ConfigInitializer::class
     )
     override fun executionThread() = ExecutionThread.BACKGROUND
     override suspend fun create(context: android.content.Context): String {
-        val config = FrameReady.getOrNull(ConfigInitializer::class.java)
+        val config = FrameReady.getOrNull(ConfigInitializer::class)
         delay(500)
         return "network::client=ready cache=db-backed api=${config?.get("apiVersion") ?: "v1"}"
     }
@@ -149,7 +149,7 @@ class NetworkCacheInitializer : FrameReadyInitializer<String> {
 // dependents fail; all other initializers still resolve.
 // ─────────────────────────────────────────────
 class FailingInitializer : FrameReadyInitializer<String> {
-    override fun dependencies() = emptyList<Class<out FrameReadyInitializer<*>>>()
+    override fun dependencies() = emptyList<kotlin.reflect.KClass<out FrameReadyInitializer<*>>>()
     override fun executionThread() = ExecutionThread.BACKGROUND
     override suspend fun create(context: android.content.Context): String {
         delay(300)
@@ -163,7 +163,7 @@ class FailingInitializer : FrameReadyInitializer<String> {
 // also fails — but all independent initializers are unaffected.
 // ─────────────────────────────────────────────
 class DependentOnFailingInitializer : FrameReadyInitializer<String> {
-    override fun dependencies() = listOf(FailingInitializer::class.java)
+    override fun dependencies() = listOf(FailingInitializer::class)
     override fun executionThread() = ExecutionThread.BACKGROUND
     override suspend fun create(context: android.content.Context): String {
         delay(200)
@@ -214,14 +214,14 @@ class StandardMainActivity : ComponentActivity() {
         // runCatching absorbs FailingInitializer / DependentOnFailing so they don't block TTFD.
         lifecycleScope.launch {
             listOf(
-                async { runCatching { FrameReady.await(AnalyticsInitializer::class.java) } },
-                async { runCatching { FrameReady.await(CrashReporterInitializer::class.java) } },
-                async { runCatching { FrameReady.await(ImageLoaderInitializer::class.java) } },
-                async { runCatching { FrameReady.await(FeatureFlagsInitializer::class.java) } },
-                async { runCatching { FrameReady.await(PushNotificationInitializer::class.java) } },
-                async { runCatching { FrameReady.await(DatabaseInitializer::class.java) } },
-                async { runCatching { FrameReady.await(ConfigInitializer::class.java) } },
-                async { runCatching { FrameReady.await(NetworkCacheInitializer::class.java) } },
+                async { runCatching { FrameReady.await(AnalyticsInitializer::class) } },
+                async { runCatching { FrameReady.await(CrashReporterInitializer::class) } },
+                async { runCatching { FrameReady.await(ImageLoaderInitializer::class) } },
+                async { runCatching { FrameReady.await(FeatureFlagsInitializer::class) } },
+                async { runCatching { FrameReady.await(PushNotificationInitializer::class) } },
+                async { runCatching { FrameReady.await(DatabaseInitializer::class) } },
+                async { runCatching { FrameReady.await(ConfigInitializer::class) } },
+                async { runCatching { FrameReady.await(NetworkCacheInitializer::class) } },
             ).awaitAll()
             reportFullyDrawn()
         }
@@ -289,65 +289,65 @@ fun StandardSampleScreen(activityStartMs: Long) {
         // Wrapped in try-catch so a timeout shows as ERROR in the UI rather than crashing.
         launch {
             markCalled(0)
-            try { markResolved(0, FrameReady.await(AnalyticsInitializer::class.java)) }
+            try { markResolved(0, FrameReady.await(AnalyticsInitializer::class)) }
             catch (e: Exception) { markError(0, e.message ?: "timeout") }
         }
         launch {
             markCalled(1)
-            try { markResolved(1, FrameReady.await(CrashReporterInitializer::class.java)) }
+            try { markResolved(1, FrameReady.await(CrashReporterInitializer::class)) }
             catch (e: Exception) { markError(1, e.message ?: "timeout") }
         }
         launch {
             markCalled(2)
-            try { markResolved(2, FrameReady.await(ImageLoaderInitializer::class.java)) }
+            try { markResolved(2, FrameReady.await(ImageLoaderInitializer::class)) }
             catch (e: Exception) { markError(2, e.message ?: "timeout") }
         }
         launch {
             markCalled(3)
             try {
-                val r = FrameReady.await(FeatureFlagsInitializer::class.java)
+                val r = FrameReady.await(FeatureFlagsInitializer::class)
                 markResolved(3, r.entries.joinToString(" ") { "${it.key}=${it.value}" })
             } catch (e: Exception) { markError(3, e.message ?: "timeout") }
         }
         launch {
             markCalled(4)
-            try { markResolved(4, FrameReady.await(PushNotificationInitializer::class.java)) }
+            try { markResolved(4, FrameReady.await(PushNotificationInitializer::class)) }
             catch (e: Exception) { markError(4, e.message ?: "timeout") }
         }
         launch {
             markCalled(5)
-            try { markResolved(5, FrameReady.await(DatabaseInitializer::class.java)) }
+            try { markResolved(5, FrameReady.await(DatabaseInitializer::class)) }
             catch (e: Exception) { markError(5, e.message ?: "timeout") }
         }
         launch {
             markCalled(6)
             try {
-                val r = FrameReady.await(ConfigInitializer::class.java)
+                val r = FrameReady.await(ConfigInitializer::class)
                 markResolved(6, r.entries.joinToString(" ") { "${it.key}=${it.value}" })
             } catch (e: Exception) { markError(6, e.message ?: "timeout") }
         }
         launch {
             markCalled(7)
-            try { markResolved(7, FrameReady.await(NetworkCacheInitializer::class.java)) }
+            try { markResolved(7, FrameReady.await(NetworkCacheInitializer::class)) }
             catch (e: Exception) { markError(7, e.message ?: "timeout") }
         }
         // Initializer 9: intentionally fails to prove failure isolation
         launch {
             markCalled(8)
-            try { markResolved(8, FrameReady.await(FailingInitializer::class.java)) }
+            try { markResolved(8, FrameReady.await(FailingInitializer::class)) }
             catch (e: Exception) { markError(8, e.message ?: "failed") }
         }
         // Initializer 10: depends on #9 — cascade-fails, others unaffected
         launch {
             markCalled(9)
-            try { markResolved(9, FrameReady.await(DependentOnFailingInitializer::class.java)) }
+            try { markResolved(9, FrameReady.await(DependentOnFailingInitializer::class)) }
             catch (e: Exception) { markError(9, e.message ?: "cascade") }
         }
 
         // getOrNull() poll: non-blocking; returns null until Analytics resolves
         launch {
             while (getOrNullSnapshot == null) {
-                getOrNullSnapshot = FrameReady.getOrNull(AnalyticsInitializer::class.java)
+                getOrNullSnapshot = FrameReady.getOrNull(AnalyticsInitializer::class)
                 if (getOrNullSnapshot == null) delay(100)
             }
         }
@@ -358,7 +358,7 @@ fun StandardSampleScreen(activityStartMs: Long) {
             delay(6000)
             val t = SystemClock.elapsedRealtime()
             try {
-                FrameReady.await(ImageLoaderInitializer::class.java)
+                FrameReady.await(ImageLoaderInitializer::class)
                 lateArrivalMs = SystemClock.elapsedRealtime() - t
             } catch (_: Exception) {}
         }

@@ -1,8 +1,10 @@
 # FrameReady 🚀
 
-`FrameReady` is a high-performance, lightweight, and production-ready Android startup library designed to optimize app cold-start times. 
+`FrameReady` is a high-performance, lightweight, and production-ready startup library designed to optimize app cold-start times, built as **Kotlin Multiplatform** — the same dependency-ordered, post-first-frame engine runs on both Android and iOS.
 
 While standard `androidx.startup` (App Startup) runs initializers **synchronously on the main thread during `ContentProvider.onCreate()`** (blocking the UI before the first frame is drawn), `FrameReady` defers initialization **until after the real first frame has been successfully drawn to the screen**.
+
+On iOS (and on Android for Compose apps using the single-Activity, multiple-composable pattern), call `FrameReady.install(...)` once and `FrameReady.signalCompositionReady(context)` from a `LaunchedEffect(Unit)` in your root composable — there's no Activity-lifecycle equivalent on iOS, so composition readiness is the trigger on every platform in that setup.
 
 ---
 
@@ -148,7 +150,7 @@ dependencies {
 Implement `FrameReadyInitializer<T>` to define your background task:
 ```kotlin
 class DatabaseInitializer : FrameReadyInitializer<String> {
-    override fun dependencies() = emptyList<Class<out FrameReadyInitializer<*>>>()
+    override fun dependencies() = emptyList<KClass<out FrameReadyInitializer<*>>>()
     
     // Runs on Dispatchers.IO automatically!
     override fun executionThread() = ExecutionThread.BACKGROUND
@@ -189,7 +191,7 @@ Please act as an interactive migration assistant. Before writing any code, ask m
 2. Do you want to collect FrameReady cold-start metrics?
 3. If yes, on which Activity would you like to collect and observe these metrics?
 
-Once I answer, analyze my code and generate the `FrameReadyInitializer` classes that execute on the `BACKGROUND` thread. Make sure to define dependencies using `List<Class<out FrameReadyInitializer<*>>>`. Finally, show me how to register the new initializers in my `AndroidManifest.xml` under the `FrameReadyProvider`, and how to collect the `FrameReady.metricsFlow` in my chosen Activity.
+Once I answer, analyze my code and generate the `FrameReadyInitializer` classes that execute on the `BACKGROUND` thread. Make sure to define dependencies using `List<KClass<out FrameReadyInitializer<*>>>` (`::class` references, not `::class.java`). Finally, show me how to register the new initializers in my `AndroidManifest.xml` under the `FrameReadyProvider`, and how to collect the `FrameReady.metricsFlow` in my chosen Activity.
 ```
 
 ---
@@ -285,9 +287,10 @@ Implement `FrameReadyInitializer<T>` to declare your task, its dependencies, and
 import android.content.Context
 import com.frameready.FrameReadyInitializer
 import com.frameready.ExecutionThread
+import kotlin.reflect.KClass
 
 class AInitializer : FrameReadyInitializer<String> {
-    override fun dependencies(): List<Class<out FrameReadyInitializer<*>>> = emptyList()
+    override fun dependencies(): List<KClass<out FrameReadyInitializer<*>>> = emptyList()
     
     override fun executionThread() = ExecutionThread.BACKGROUND
 
@@ -302,15 +305,21 @@ If task `B` depends on task `A`'s finished output, declare it under `dependencie
 
 ```kotlin
 class BInitializer : FrameReadyInitializer<Database> {
-    override fun dependencies() = listOf(AInitializer::class.java)
+    override fun dependencies() = listOf(AInitializer::class)
 
     override suspend fun create(context: Context): Database {
         // A is guaranteed to be finished here. Safe to call getOrNull!
-        val config = FrameReady.getOrNull(AInitializer::class.java)!!
+        val config = FrameReady.getOrNull(AInitializer::class)!!
         return Database.init(context, config)
     }
 }
 ```
+
+> **API note:** every `FrameReady` member — `await`, `getOrNull`, `get`, `disable`, `retry`,
+> `registerFactory`, `asStateFlow`, `asDeferred` — takes a `KClass` (`SomeInitializer::class`),
+> not `java.lang.Class` (`::class.java`). The one exception is the legacy
+> `FrameReady.install(context, List<Class<Any>>)` overload used by manifest auto-discovery
+> (Options A/B below) — that one still takes `Class` for source/binary compatibility.
 
 ---
 
@@ -328,7 +337,7 @@ If external code (e.g. a ViewModel) requests a result using `await()` before com
 // Called from a ViewModel's init block before first frame completes:
 viewModelScope.launch {
     // 100% safe. Suspends caller, resumes as soon as B initializer finishes!
-    val database = FrameReady.await(BInitializer::class.java)
+    val database = FrameReady.await(BInitializer::class)
     database.queryHistory()
 }
 ```
@@ -342,7 +351,7 @@ If a dependency path is cyclic (e.g., `A -> B -> A`), `FrameReady` identifies th
 ### Rule 5 — Timeout protection
 Specify optional timeouts to prevent endless lockouts:
 ```kotlin
-suspend val db = FrameReady.await(BInitializer::class.java, timeoutMs = 3000L)
+suspend val db = FrameReady.await(BInitializer::class, timeoutMs = 3000L)
 // Throws InitializerTimeoutException if B takes longer than 3 seconds
 ```
 
@@ -489,7 +498,7 @@ import dagger.hilt.android.EntryPointAccessors
 import dagger.hilt.components.SingletonComponent
 
 class DatabaseInitializer : FrameReadyInitializer<SQLiteDatabase> {
-    override fun dependencies() = emptyList<Class<out FrameReadyInitializer<*>>>()
+    override fun dependencies() = emptyList<KClass<out FrameReadyInitializer<*>>>()
     override fun executionThread() = ExecutionThread.BACKGROUND
 
     // Declare the Hilt EntryPoint
@@ -532,7 +541,7 @@ object ProviderModule {
     fun provideAsyncDatabase(): suspend () -> SQLiteDatabase {
         return {
             // Suspends until FrameReady has successfully completed the initialization
-            FrameReady.await(DatabaseInitializer::class.java)
+            FrameReady.await(DatabaseInitializer::class)
         }
     }
 }

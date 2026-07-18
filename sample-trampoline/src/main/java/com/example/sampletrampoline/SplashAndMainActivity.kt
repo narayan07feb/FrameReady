@@ -83,7 +83,7 @@ class DelayedFeatureInitializer : FrameReadyInitializer<String> {
         return "Core_Engine_Boot_Successfully"
     }
 
-    override fun dependencies(): List<Class<out FrameReadyInitializer<*>>> = emptyList()
+    override fun dependencies(): List<kotlin.reflect.KClass<out FrameReadyInitializer<*>>> = emptyList()
 }
 
 // 3. Real Target Activity (after the Splash Trampoline)
@@ -105,7 +105,7 @@ fun TrampolineSampleScreen() {
     LaunchedEffect(Unit) {
         val startAwait = System.currentTimeMillis()
         try {
-            val result = FrameReady.await(DelayedFeatureInitializer::class.java)
+            val result = FrameReady.await(DelayedFeatureInitializer::class)
             val delayText = System.currentTimeMillis() - startAwait
             coreStatus = "Feature Ready: $result (Complete: ${delayText}ms post-MainActivity frame)"
             isCoreReady = true

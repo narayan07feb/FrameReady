@@ -55,6 +55,7 @@ secrets {
 // This makes it easy to add them back in the future if needed.
 dependencies {
   implementation(project(":frameready"))
+  implementation(project(":shared-ui"))
   implementation(platform(libs.androidx.compose.bom))
   implementation(platform(libs.firebase.bom))
   // implementation(libs.accompanist.permissions)

@@ -69,7 +69,7 @@ class PostFrameTaskInitializer : FrameReadyInitializer<Unit> {
         AppStartupNotifier.log("[FrameReady] Post-Frame asynchronous services are fully warm!")
     }
 
-    override fun dependencies(): List<Class<out FrameReadyInitializer<*>>> = emptyList()
+    override fun dependencies(): List<kotlin.reflect.KClass<out FrameReadyInitializer<*>>> = emptyList()
 }
 
 // 4. View Model coordinating statuses
@@ -91,7 +91,7 @@ class StartupViewModel : ViewModel() {
             _statusText.value = "App Startup completed synchronously! App displayed immediately. Now waiting for Post-Frame pipeline..."
             
             // Wait for FrameReady initializer to complete
-            FrameReady.await(PostFrameTaskInitializer::class.java)
+            FrameReady.await(PostFrameTaskInitializer::class)
             
             _statusText.value = "Post-Frame loading is completely finished! App is fully alive and responsive."
             _postFrameComplete.value = true
