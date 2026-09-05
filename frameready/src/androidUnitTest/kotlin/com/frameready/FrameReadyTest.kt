@@ -138,8 +138,9 @@ class FrameReadyTest {
     // ==========================================
     @Test
     fun testCircularDependency_FailsFast() {
+        FrameReady.install(context, listOf(CircularA::class.java as Class<Any>))
         try {
-            FrameReady.install(context, listOf(CircularA::class.java as Class<Any>))
+            FrameReady.signalCompositionReady()
             fail("Expected CircularDependencyException to be thrown!")
         } catch (e: CircularDependencyException) {
             assertTrue(e.message!!.contains("circular dependency"))
@@ -209,6 +210,7 @@ class FrameReadyTest {
     fun testTrampolineActivity_IsSkipped() {
         val app = context.applicationContext as Application
         FrameReady.install(app, listOf(TestInitA::class.java as Class<Any>))
+        FrameReady.trampolineThresholdMs = 500L
 
         val mockActivity = Robolectric.buildActivity(Activity::class.java).get()
         val destActivity = Robolectric.buildActivity(Activity::class.java).get()
@@ -248,7 +250,7 @@ class FrameReadyTest {
         callbacks.onActivityStarted(mockActivity)
         callbacks.onActivityResumed(mockActivity)
 
-        shadowOf(Looper.getMainLooper()).idleFor(600, java.util.concurrent.TimeUnit.MILLISECONDS)
+        shadowOf(Looper.getMainLooper()).idle()
         shadowOf(Looper.getMainLooper()).idle()
 
         var result: String? = null
@@ -345,13 +347,18 @@ class FrameReadyTest {
     fun testCumulativeInstallation_SavesNodes() {
         FrameReady.install(context, listOf(TestInitA::class.java as Class<Any>))
         FrameReady.install(context, listOf(TestInitB::class.java as Class<Any>))
+        FrameReady.signalCompositionReady()
 
-        val sorted = FrameReady::class.java.getDeclaredField("sortedInitializers").apply {
-            isAccessible = true
-        }.get(FrameReady) as List<Any?>
-
-        assertTrue(sorted.contains(TestInitA::class))
-        assertTrue(sorted.contains(TestInitB::class))
+        var result: String? = null
+        var limit = 0
+        while (limit < 100) {
+            result = FrameReady.getOrNull(TestInitB::class)
+            if (result != null) break
+            Thread.sleep(50)
+            shadowOf(Looper.getMainLooper()).idle()
+            limit++
+        }
+        assertEquals("Result_B_with_Result_A", result)
     }
 
     // ==========================================
@@ -622,6 +629,41 @@ class FrameReadyTest {
 
         FrameReady.retry(TestInitA::class)
         assertNull(FrameReady.getOrNull(TestInitA::class))
+    }
+
+    @Test
+    fun `Given KClass install without activity callbacks - When signalCompositionReady with no args - Then initializer create completes`() {
+        FrameReady.install(context, listOf(TestInitA::class))
+        FrameReady.signalCompositionReady()
+
+        var result: String? = null
+        var limit = 0
+        while (limit < 100) {
+            result = FrameReady.getOrNull(TestInitA::class)
+            if (result != null) break
+            Thread.sleep(50)
+            shadowOf(Looper.getMainLooper()).idle()
+            limit++
+        }
+        assertEquals("Result_A", result)
+    }
+
+    @Test
+    fun `Given manifest class names only - When signalCompositionReady - Then create runs after Class forName`() {
+        FrameReady.install(context, emptyList<Class<Any>>())
+        FrameReady.enqueueManifestInitializerNames(listOf(TestInitA::class.java.name))
+        FrameReady.signalCompositionReady()
+
+        var result: String? = null
+        var limit = 0
+        while (limit < 100) {
+            result = FrameReady.getOrNull(TestInitA::class)
+            if (result != null) break
+            Thread.sleep(50)
+            shadowOf(Looper.getMainLooper()).idle()
+            limit++
+        }
+        assertEquals("Result_A", result)
     }
 
     private fun getRegisteredCallbacks(app: Application): Application.ActivityLifecycleCallbacks {

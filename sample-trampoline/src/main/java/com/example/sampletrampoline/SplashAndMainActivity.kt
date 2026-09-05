@@ -20,12 +20,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.frameready.FrameReady
 import com.frameready.FrameReadyInitializer
+import com.frameready.trampolineActivities
 import kotlinx.coroutines.delay
 
 // 1. Splash (Trampoline) Activity
 class SplashActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        FrameReady.trampolineActivities.add(SplashActivity::class.java)
         
         // Render a simple loading screen for 600ms to mimic a real splash delay,
         // then launch the real target Activity and call finish().

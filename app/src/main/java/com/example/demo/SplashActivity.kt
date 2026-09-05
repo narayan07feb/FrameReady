@@ -16,10 +16,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import com.example.MainActivity
 import com.example.ui.theme.MyApplicationTheme
+import com.frameready.FrameReady
+import com.frameready.trampolineActivities
 
 class SplashActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        FrameReady.trampolineActivities.add(SplashActivity::class.java)
 
         setContent {
             MyApplicationTheme {

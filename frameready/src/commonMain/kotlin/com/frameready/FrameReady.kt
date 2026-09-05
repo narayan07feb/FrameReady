@@ -38,7 +38,7 @@ import kotlin.reflect.KClass
  *   ```kotlin
  *   @Composable
  *   fun App() {
- *       LaunchedEffect(Unit) { FrameReady.signalCompositionReady(context) }
+ *       LaunchedEffect(Unit) { FrameReady.signalCompositionReady() }
  *       // navigation between screens does NOT re-trigger initialization —
  *       // it runs exactly once per process, the same as Android's classic Activity path.
  *   }
@@ -120,6 +120,9 @@ object FrameReady {
      */
     internal var platformResetHook: (() -> Unit)? = null
 
+    /** Android manifest names: [Class.forName] runs here at first frame, not in the provider. */
+    internal var platformPrepareHook: (() -> Unit)? = null
+
     // ─── Registration ──────────────────────────────────────────────────────────
 
     /**
@@ -147,9 +150,7 @@ object FrameReady {
         if (classes.isNotEmpty()) {
             initializers.addAll(classes as List<KClass<Any>>)
         }
-
-        sortedInitializers = sort(initializers.toList())
-        sortedInitializers?.forEach { clazz -> getDeferred<Any>(clazz) }
+        initializers.forEachSnapshot { getDeferred<Any>(it) }
 
         if (isInstalled.compareAndSet(false, true)) {
             libraryScope.launch {
@@ -171,7 +172,20 @@ object FrameReady {
      *
      * Call exactly once from a `LaunchedEffect(Unit)` in your app's ROOT composable. Subsequent
      * calls (e.g. from screen navigation) are no-ops — initializers run exactly once per process.
+     *
+     * Uses the [PlatformContext] from [install]. Prefer this from shared Compose code that has
+     * no platform `Context`.
      */
+    fun signalCompositionReady() {
+        val ctx = globalContext
+        if (ctx == null || !isInstalled.get()) {
+            platformLog(TAG, "signalCompositionReady() called before install(). Call install() first.", 'W')
+            return
+        }
+        markFirstFrame(ctx, currentTimeMs())
+    }
+
+    /** Same as [signalCompositionReady] but supplies an explicit [context] for [runAll]. */
     fun signalCompositionReady(context: PlatformContext) {
         if (!isInstalled.get()) {
             platformLog(TAG, "signalCompositionReady() called before install(). Call install() first.", 'W')
@@ -191,6 +205,16 @@ object FrameReady {
         activityName: String? = null,
         trampolineSkipCount: Int = 0
     ) {
+        if (hasTriggered.get()) return
+        platformPrepareHook?.invoke()
+        val sorted = try {
+            sort(initializers.toList())
+        } catch (e: CircularDependencyException) {
+            hasTriggered.compareAndSet(false, true)
+            throw e
+        }
+        sortedInitializers = sorted
+        sorted.forEach { getDeferred<Any>(it) }
         if (hasTriggered.compareAndSet(false, true)) {
             runAll(context, firstFrameMs, activityName, trampolineSkipCount)
         }

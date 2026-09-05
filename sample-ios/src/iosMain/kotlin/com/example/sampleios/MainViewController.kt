@@ -20,10 +20,11 @@ import platform.UIKit.UIViewController
  * rendered natively on iOS via Compose Multiplatform. Called from Swift as
  * `MainViewControllerKt.MainViewController()`.
  *
- * Unlike Android — where `FrameReadyProvider`'s manifest auto-discovery registers and triggers
- * initializers automatically — iOS has no such mechanism and cannot reflectively instantiate
- * classes, so this entry point explicitly registers a factory per initializer, installs, and
- * signals composition-ready itself (the documented iOS integration contract for FrameReady).
+ * Unlike Android — where `FrameReadyProvider`'s manifest auto-discovery registers initializers —
+ * iOS has no such mechanism and cannot reflectively instantiate classes, so this entry point
+ * registers a factory per initializer and calls [FrameReady.install]. First-frame is signaled
+ * from shared `MainScreen` via `LaunchedEffect(Unit) { FrameReady.signalCompositionReady() }`.
+ * Do not signal here: that starts `create()` before the first composition.
  */
 @Suppress("FunctionName")
 fun MainViewController(): UIViewController {
@@ -32,7 +33,6 @@ fun MainViewController(): UIViewController {
     FrameReady.registerFactory(BInitializer::class) { BInitializer() }
     FrameReady.registerFactory(CInitializer::class) { CInitializer() }
     FrameReady.install(PlatformContext.Default, listOf(AInitializer::class, BInitializer::class, CInitializer::class))
-    FrameReady.signalCompositionReady(PlatformContext.Default)
 
     return ComposeUIViewController {
         val viewModel = remember { MainViewModel() }

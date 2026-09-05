@@ -1,36 +1,28 @@
 # FrameReady 🚀
 
-`FrameReady` is a high-performance, lightweight, and production-ready startup library designed to optimize app cold-start times, built as **Kotlin Multiplatform** — the same dependency-ordered, post-first-frame engine runs on both Android and iOS.
+`FrameReady` is a Kotlin Multiplatform library that **defers each initializer's `create()`** until after first paint (Android Activity path) or until you call `signalCompositionReady()` (Compose / iOS). It does not delete SDK work. If the first screen `await()`s those results, time-to-usable stays about the same.
 
-While standard `androidx.startup` (App Startup) runs initializers **synchronously on the main thread during `ContentProvider.onCreate()`** (blocking the UI before the first frame is drawn), `FrameReady` defers initialization **until after the real first frame has been successfully drawn to the screen**.
+`androidx.startup` runs `Initializer.create()` on the main thread inside a `ContentProvider` **before** first frame. FrameReady still uses a ContentProvider on Android for **discovery and `install()`** (class loading and constructors can run that early). Only `create()` is scheduled later.
 
-On iOS (and on Android for Compose apps using the single-Activity, multiple-composable pattern), call `FrameReady.install(...)` once and `FrameReady.signalCompositionReady(context)` from a `LaunchedEffect(Unit)` in your root composable — there's no Activity-lifecycle equivalent on iOS, so composition readiness is the trigger on every platform in that setup.
+On Compose (Android or iOS), call `FrameReady.install(...)` once, then `FrameReady.signalCompositionReady()` from a `LaunchedEffect(Unit)` in the **root** composable. iOS has no Activity lifecycle auto-trigger. `LaunchedEffect` means that composable has started, not a hardware vsync guarantee.
 
 ---
 
 ## 🌟 Key Features
 
-- **Double-Buffered Frame Deferral**: Bypasses critical pre-frame phases, launching tasks on the first Choreographer callback frame.
+- **Post-frame `create()`**: Android Activity install triggers on a surviving, non-listed-trampoline activity (optional `trampolineThresholdMs` scan), then one `Choreographer` callback and on API 29+ a `FrameCommitCallback`. Compose/iOS use `signalCompositionReady()` from a root `LaunchedEffect`. Manifest class names are loaded at that trigger, not in the ContentProvider.
 - **Topological Sorting (Kahn's Sort)**: Automatically builds and validates dependency graphs at install-time.
 - **Declarative Thread Routing**: Execute heavy initializers on `Dispatchers.IO` (BACKGROUND) or light UI tasks on `Dispatchers.Main` (MAIN) seamlessly.
 - **Thread-safe Wait/Suspend Contract**: If a consumer requests an initializer's result via `await()` before it is ready, the coroutine **suspends** and resumes automatically.
-- **Deterministic Trampoline Skip**: Tracks activity lifetimes to ignore transient visible routing/deep-linking activities (Splash/Notification trampolines), executing only after the user-visible primary activity draws.
+- **Deterministic Trampoline Skip**: List splash/router activities in `trampolineActivities`. Optional `trampolineThresholdMs` for unknown short-lived activities (default 0).
 - **Stable Calibrated Metrics**: Retains launch latency. Auto-calculates historical TTFF (P50, P90, P99) and cold-start improvement index after reaching a customizable stability threshold (e.g. 100 successful runs) with auto-resets on failure.
 - **Zero-Config Manifest Merging**: Automatic component discovery using standard ContentProvider meta-data declarations.
 
-## ⚡ Performance Overhead Benchmark
+## ⚡ Library overhead
 
-When adopting any startup/telemetry SDK, the first question is always: *"How much time does the SDK itself add to my app's launch?"*
+FrameReady's ContentProvider still runs before first frame. Benchmark 1 (below) compares a no-library app to FrameReady with **0 initializers**. Both apps `Thread.sleep(1500)` in `Application.onCreate`. The TTID delta was within run-to-run noise. That measurement does **not** support a "~1.5 ms vs ~120 ms ContentProvider" claim.
 
-Because `FrameReady` relies heavily on background coroutines and executes strictly zero heavy-lifting on the Main Thread during `Application.onCreate()`, its footprint is near-invisible. 
-
-| Metric | OS Standard Baseline | FrameReady SDK Overhead |
-| --- | --- | --- |
-| **Main Thread Blocking (ContentProvider)** | `~120ms` (androidx.startup) | **`~1.5ms`** (FrameReadyProvider) |
-| **Memory Footprint (Cold)** | `~2MB` | **`< 250KB`** |
-| **Disk Storage (Local Caching)** | `~100KB` | **`0 Bytes`** (BYOS architecture) |
-
-*(Benchmarks run on a standard Pixel 6 running Android 13 using Android Macrobenchmark.)*
+Historical metrics storage is bring-your-own (`FrameReadyStorage`). The library does not require its own on-disk cache.
 
 ---
 
@@ -56,18 +48,22 @@ The numbers below are real measurements from the included macrobenchmark suite, 
 
 ---
 
-### Benchmark 2 — Post-Frame Deferral Benefit (FrameReady with 3 Initializers)
+### Benchmark 2 — Post-frame deferral (skip blocking `Activity.onCreate`)
 
-**Workload:** The `:sample-standard` app blocks `Application.onCreate()` with 800 ms of `Thread.sleep` in all three modes. For the Traditional and Synchronous modes, an additional 1,500 ms runs in `Activity.onCreate()` before `setContent` — simulating the pattern where SDKs initialize synchronously on the main thread before the first frame. In FrameReady mode, the 3 registered initializers (1,200 ms + 600 ms + 500 ms, running concurrently) run entirely post-frame and never touch the main thread.
+**Workload:** Every `:sample-standard` launch still `Thread.sleep(800)` in `Application.onCreate`, including FrameReady mode. `traditional` and `appstartup` then `Thread.sleep(1500)` in `Activity.onCreate` **before** `setContent`. FrameReady mode skips that 1,500 ms. Registered initializers use `delay()` on background dispatchers after the first-frame trigger, so they do not affect TTID.
 
-> **On the Synchronous mode:** `benchmarkAppStartupLibrary` passes `INIT_MODE = "appstartup"` which triggers `Thread.sleep(1500)` in `Activity.onCreate()` — it does not integrate the `androidx.startup` library directly. It simulates the *effect*: synchronous main-thread blocking before the first frame. Because `androidx.startup` executes its `Initializer.create()` calls synchronously inside a `ContentProvider` before `Application.onCreate()`, the outcome on TTID is the same — the main thread is blocked for the same total duration. The near-identical results for both modes (9 ms delta) confirm they represent the same scenario.
+This measures **“do not block the main thread before `setContent`”**, not FrameReady vs a real `androidx.startup` integration.
+
+> **`appstartup` mode:** `INIT_MODE = "appstartup"` only adds that 1,500 ms sleep. It does **not** use the `androidx.startup` library.
 
 | Test | Strategy | Median TTID |
 |:---|:---|---:|
-| `benchmarkTraditional` | SDKs blocking in `Application.onCreate` + `Activity.onCreate` | **~2,699 ms** |
-| `benchmarkAppStartupLibrary` | Same blocking pattern (simulates `androidx.startup` behavior) | **~2,708 ms** |
-| `benchmarkFrameReady` | SDKs deferred post-frame via FrameReady | **~1,138 ms** |
-| **Improvement** | FrameReady vs synchronous blocking | **~57% faster TTID** |
+| `benchmarkTraditional` | 800 ms in `Application.onCreate` + 1,500 ms in `Activity.onCreate` | **~2,699 ms** |
+| `benchmarkAppStartupLibrary` | Same blocking pattern (not Jetpack App Startup) | **~2,708 ms** |
+| `benchmarkFrameReady` | Same 800 ms in `Application.onCreate`, no Activity sleep | **~1,138 ms** |
+| **Improvement** | vs the extra 1,500 ms main-thread sleep | **~57% faster TTID** |
+
+`:sample-standard` also `await()`s eight successful initializers and then calls `reportFullyDrawn()`. Time-to-full-display is first frame **plus** that graph. TTID going down does not mean the first screen is already usable if it waits on those results.
 
 ---
 
@@ -155,7 +151,7 @@ class DatabaseInitializer : FrameReadyInitializer<String> {
     // Runs on Dispatchers.IO automatically!
     override fun executionThread() = ExecutionThread.BACKGROUND
 
-    override suspend fun create(context: Context): String {
+    override suspend fun create(context: PlatformContext): String {
         // Run heavy SDK setups, DB migrations, or network calls here
         return "Database Connected"
     }
@@ -175,7 +171,15 @@ Add your initializer to the `AndroidManifest.xml` using the `FrameReadyProvider`
 </provider>
 ```
 
-**That's it!** The task will now run *after* your users see the first frame, rather than blocking them on a white screen.
+On Android this uses Activity lifecycle (list trampolines, or opt-in `trampolineThresholdMs`) then a frame callback. `create()` and `Class.forName` for manifest names run after that, not during the provider.
+
+**Compose / iOS:** there is no manifest discovery on iOS. Call `registerFactory` (required on iOS), `install(...)`, and from the **root** composable:
+
+```kotlin
+LaunchedEffect(Unit) { FrameReady.signalCompositionReady() }
+```
+
+Do not call `signalCompositionReady()` in the iOS host before `ComposeUIViewController` / first composition. That starts `create()` too early. The `:shared-ui` `MainScreen` already does this `LaunchedEffect`.
 
 ---
 
@@ -196,84 +200,29 @@ Once I answer, analyze my code and generate the `FrameReadyInitializer` classes 
 
 ---
 
-## 📦 Traditional Startup vs. FrameReady Post-Frame Deferral
+## 📦 What actually changes vs blocking startup
 
-Modern Android applications degrade in cold start speed due to progressive SDK accumulation (analytics, crash reporting, databases, and heavy cloud platforms). Comparing the traditional approach with `FrameReady` highlights the paradigm shift in performance, safety, and responsiveness:
+Moving `create()` after first paint helps **TTID** only if that work used to run on the main thread **before** first pixels, and the first screen can render without those SDKs.
 
-### 1. Conceptual & Feature Matrix
+| | Blocking `onCreate` / App Startup `create()` | FrameReady |
+|---|---|---|
+| When `create()` runs | Before first frame (often on main) | After the platform trigger (see below) |
+| First pixels | Wait on that work | Can draw if UI does not `await()` |
+| First screen that `await()`s | Ready when init finishes (UI was blocked) | Ready when init finishes (UI already drawn) |
+| Android trampolines | First resumed activity | Skip `trampolineActivities`; optional delay scan (default 0) |
+| ANR | Possible if you block main too long | Still possible if `executionThread() = MAIN` and `create()` blocks |
 
-| Architectural Property | Standard / Traditional Android Startup <br>*(Application `onCreate()` & `androidx.startup`)* | Modern Post-Frame Startup <br>*(FrameReady Asynchronous Deferral)* |
-| :--- | :--- | :--- |
-| **Execution Window** | Pre-First Frame (during `ContentProvider` lifecycle and Application startup) | **Post-First Frame** (deferred until `Choreographer` rasterizes pixels to screen) |
-| **Main Thread Impact** | **Directly Blocks Main Thread** (synchronously freezes main dispatcher) | **Non-blocking / Concurrent** (scheduled on background or Main thread safely) |
-| **User Experience (UX)** | Blank screens, prolonged system-level splash screen freezes, or ANR indicators | **Instant visual rendering** of the core UI with smooth fluid animations |
-| **Dependency Access Flow** | In-place synchronous return (causes pipeline locks) | **Asynchronous `await()` / Suspend-Resume contract** |
-| **Ideal Use Cases** | Zero-weight crash reporters, core application logger setups | DB pre-migrations, heavy network/file cache setups, Firebase, Ad/Social SDKs |
-| **Trampoline Safeguards** | **None** (unaware of transient screens; executes on first activity launch) | **Fully Protected** (filters out transient splash screens or deep-link routers) |
-| **Vulnerability to ANRs** | **High** (any synchronous setup exceeding 5,000ms triggers App Not Responding errors) | **Zero** (processes execute concurrently outside the system startup gate) |
+**Do not put here:** crash reporters that must be up before the first crash, or anything the first frame must have synchronously.
 
----
+The five `sample-*` apps show integration shapes (Hilt, trampoline, notification extras). They are **not** independently measured TTFF tables. Measured numbers are only Benchmark 1 and 2 above.
 
-### 📊 Benchmark Performance Analysis (3,000ms Heavy Cold Start Simulation)
+### Why TTID can drop
 
-To quantify these advantages under a realistic production payload, our test architecture structures **one heavyweight, blocking initialization task requiring 3,000ms execution latency** (such as synchronous legacy SQLite migrations or major file cache decoding). 
+If SDKs run sequentially on the main thread before `setContent`, the activity cannot draw. FrameReady runs `create()` later, in dependency order, in parallel where the graph allows. Independent nodes overlap. Callers use suspending `await()`, not `Thread.sleep` on main.
 
-The three startup architectures produce the following performance figures:
+**Android Activity path:** after a non-trampoline `onResume`, one `Choreographer` callback, then on API 29+ `registerFrameCommitCallback`. Optional `trampolineThresholdMs` uses `Handler.postDelayed`. That is not a double-buffered callback loop.
 
-| Measured Performance Metric | Approach A: <br>Traditional `Application.onCreate` | Approach B: <br>Standard `androidx.startup` | Approach C: <br>The `FrameReady` Engine |
-| :--- | :--- | :--- | :--- |
-| **Main Thread Responsiveness** | **Frozen** for 3,000ms (ANR Risk ❌) | **Frozen** for 3,000ms (ANR Risk ❌) | **100% Fluid & Active** (0ms Main Thread Block ✅) |
-| **Cold-Start Latency (TTFF)** | **3,120 ms** ❌ | **3,050 ms** ❌ | **182 ms** (94% Faster) ⚡ |
-| **Cold-Start Speed Improvement** | Baseline (0%) | +2.2% faster (negligible) | **+94.1% Cold Start Speedup!** 🚀 |
-| **Time-to-Interactive (TTI)** | 3,120 ms | 3,050 ms | **182 ms** (Interactive visual layouts immediately responsive) |
-| **UX Quality Indicator** | Blank black/white screen for 3+ seconds | Frozen launcher splash transitions | **Immediate interactive frame rendering** |
-| **Background Resolve Delay** | 0 ms (at the expense of a frozen app) | 0 ms (at the expense of a frozen app) | **1,404 ms concurrent run** (without a single dropped frame) |
-| **ANR Susceptibility Rate** | Extreme Risk (Immediate Crash) | Extreme Risk (Immediate Crash) | Immune (Zero risk of startup crash or timeout) |
-
-> 📌 **Key Terms Explained:**
-> * **Time-to-First-Frame (TTFF):** The exact duration between the JVM launching your application process and the moment the screen Choreographer rasterizes the very first user-visible frame.
-> * **Resolved Latency:** The background processing overhead concurrent to frame-rendering. Under `FrameReady`, tasks are scheduled immediately after drawing. This translates to **1,404 ms of concurrent compute processing** that overlaps with visual animation cycles, avoiding main thread jitter and dropping 0 frames.
-
----
-
-### 🧪 Comprehensive Multi-Scenario Sample Suite Benchmarks
-
-To demonstrate how the `FrameReady` engine behaves under diverse real-world architectural configurations, our test suite includes five production-grade, highly specialized sample subprojects. Each project simulates a distinct enterprise use case with custom pre-frame/post-frame latency parameters:
-
-| Sample App Module | Architectural Focus & Use Case | Pre-Frame Main Thread Cost (Blocking) | Post-Frame Concurrent Latency (Deferred) | Time-to-First-Frame (TTFF) | Net Cold-Start Improvement |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| **`:sample-standard`** | Standard parallelized data loading. Simulates heavy SQLite index building & system configurations. | **0 ms** / Instant Draw ✅ | 1,800 ms (Database: 1200ms, Config: 600ms) | **~180 ms** ⚡ | **+94.0% Speedup!** 🚀 |
-| **`:sample-hilt`** | Dependency Injection. Solves zero-arg `ContentProvider` constraints using Hilt entry points and deferred providers. | **0 ms** / Instant Draw ✅ | 1,500 ms (CPU-heavy encryption key derivation & credential setup) | **~185 ms** ⚡ | **+93.8% Speedup!** 🚀 |
-| **`:sample-appstartup`** | Interoperability. Runs light synchronous tasks inside Jetpack standard App Startup, deferring heavyweight workloads. | Sync load (minimal config token handshake) | 2,000 ms (Asynchronous cache & network warmups post-render) | **~190 ms** ⚡ | **+93.5% Speedup!** 🚀 |
-| **`:sample-trampoline`** | Redirection Skip. Tracks Activity state transitions to skip frame callbacks on transient Landing/Splash screens. | **0 ms** / Skipped on Splash ✅ | 1,000 ms (Delayed post-draw DB/Asset decompression on main Activity) | **~180 ms** ⚡ (Bypasses Splash) | **+94.1% Speedup!** 🚀 |
-| **`:sample-notification`** | Deep Linking Heuristics. Skips evaluation delays when the target is detected to open from notification/deep-links. | **0 ms** / Instant Draw ✅ | 800 ms (Instant deep network route setup) | **~115 ms** ⚡ (Heuristics Active) | **+96.2% Speedup!** 🚀 |
-
-#### 🔍 Scenario Highlights & Operational Details
-
-1. **`sample-standard` (Concurrent Baseline)**: Demonstrates parallelized, topological-sorted, concurrent post-frame background processing with smooth real-time state transitions.
-2. **`sample-hilt` (Dagger Hilt Injection)**: Provides a clean robust blueprint to retrieve dependencies inside a `FrameReadyInitializer` via `@EntryPoint`. Views observe a suspended provider `suspend () -> EncryptedSecretStorage` rather than a blocking constructor argument, retaining 100% UI fluidity.
-3. **`sample-appstartup` (Jetpack Interop Handshake)**: Features a seamless transition where standard `androidx.startup` initializes necessary static elements (such as early crash reporters or loggers) first, and then handoffs heavier post-draw initializers cleanly back to `FrameReady`.
-4. **`sample-trampoline` (Transient Splash Buffer)**: Solves the common anti-pattern where a startup library initializes on a landing splash screen that disappears immediately. By monitoring lifecycle state transitions, FrameReady intercepts the early destruction of `SplashActivity` and schedules layout callbacks on the real `MainActivity`.
-5. **`sample-notification` (Notification & Deep Link Bypassing)**: Leverages specific extra keys (`from_notification`, `notification_id`) or custom actions inside deep-link/notification intents to bypass the standard 500ms safety threshold. It triggers state execution instantly to deliver deep-linked content with absolute speed.
-
----
-
-### 🧬 Under-The-Hood: Why Is FrameReady So Much Faster?
-
-#### 1. Avoidance of Synchronous Queue Hopping
-In traditional startup setups, if you initialize multiple large SDKs (such as databases or cloud networks) sequentially inside `Application.onCreate()`, the system's `ActivityThread` cannot advance to inflate layouts, register views with `WindowManagerService`, or request the `Choreographer` to render pixels. The thread is entirely occupied with raw computation, creating a visible "freeze".
-
-#### 2. The Power of Double-Buffered Frame Interception
-Rather than relying on vague delayed timers (e.g., `Handler.postDelayed`), `FrameReady` uses a **double-buffered `postFrameCallback` loop**:
-1. When the system schedules the first activity layout, `FrameReady` registers a `Choreographer.FrameCallback`.
-2. This interceptor monitors the system's drawing loop to ensure that the layout, measure, and draw steps have completed.
-3. Once the layout is drawn to the frame-buffer, a second callback ensures that deep hardware-backed graphic rendering is complete, and then immediately schedules the initializer queue via cooperative Kotlin Coroutines `Dispatchers.IO`.
-
-#### 3. Kahn-Sorted Topological Resolution
-Instead of arbitrary sequential task loops, FrameReady runs a custom multi-core Kahn topological sorting algorithm at install-time. It maps your dependencies as a Directed Acyclic Graph (DAG) and executes parallelizable tasks concurrently inside background coroutines, resolving complicated chains with absolute efficiency.
-
-#### 4. The Suspended Await Contract (`suspend` vs `Thread.sleep`)
-If your UI components or ViewModels attempt to read an initialized SDK output before it has fully finished loading, traditional systems block the caller thread. `FrameReady` provides a type-safe **Thread-safe Wait/Suspend Contract**. Callers calling `await()` simply **suspend** their coroutine process. The underlying thread is fully returned to the pool to draw UI animations, and the calling coroutine resumes automatically the instant the initializer publishes its value.
+**Compose / iOS path:** you call `signalCompositionReady()`. Until you do (or the 10 s headless timeout), `create()` does not run.
 
 ---
 
@@ -284,9 +233,9 @@ If your UI components or ViewModels attempt to read an initialized SDK output be
 Implement `FrameReadyInitializer<T>` to declare your task, its dependencies, and target thread context:
 
 ```kotlin
-import android.content.Context
 import com.frameready.FrameReadyInitializer
 import com.frameready.ExecutionThread
+import com.frameready.PlatformContext
 import kotlin.reflect.KClass
 
 class AInitializer : FrameReadyInitializer<String> {
@@ -294,7 +243,7 @@ class AInitializer : FrameReadyInitializer<String> {
     
     override fun executionThread() = ExecutionThread.BACKGROUND
 
-    override suspend fun create(context: Context): String {
+    override suspend fun create(context: PlatformContext): String {
         // Perform file / network / disk setup
         return "Core Config Active"
     }
@@ -307,7 +256,7 @@ If task `B` depends on task `A`'s finished output, declare it under `dependencie
 class BInitializer : FrameReadyInitializer<Database> {
     override fun dependencies() = listOf(AInitializer::class)
 
-    override suspend fun create(context: Context): Database {
+    override suspend fun create(context: PlatformContext): Database {
         // A is guaranteed to be finished here. Safe to call getOrNull!
         val config = FrameReady.getOrNull(AInitializer::class)!!
         return Database.init(context, config)
@@ -342,8 +291,8 @@ viewModelScope.launch {
 }
 ```
 
-### Rule 3 — Cycle-detection at install-time (fast-failure)
-If a dependency path is cyclic (e.g., `A -> B -> A`), `FrameReady` identifies this immediately during installation and throws a `CircularDependencyException` **before starting any initializer**.
+### Rule 3 — Cycle-detection at first frame
+If a dependency path is cyclic (e.g., `A -> B -> A`), `FrameReady` throws `CircularDependencyException` when the first-frame trigger runs (sort happens then, not at `install()`, so constructors are not paid in `ContentProvider`).
 
 ### Rule 4 — No Main-thread blocking
 `await()` is a `suspend` function and does not block. In addition, the synchronous `.get()` method will write warning traces if called on the primary Main Looper.
@@ -363,11 +312,17 @@ Many apps launch an invisible routing activity first (`SplashActivity`, Deep-lin
 
 If a startup SDK simply hooks onto the first activity's resume, it will execute too early—on a window the user never sees.
 
-`FrameReady` solves this by tracking activity state transitions:
-1. When an Activity enters `onActivityResumed`, register a delayed handler check for **500ms** (default `TRAMPOLINE_THRESHOLD`).
-2. If the Activity stops (`onActivityStopped`) or finishes (`isFinishing`) within this 500ms window, the library flags it as a **trampoline activity** and skips its Choreographer registration.
-3. The frame trigger registers **only on the first Activity that remains active beyond the threshold**.
-4. On **Android 12+ (API 31+)**, notification trampolines are restricted by the OS, so the library skips the 500ms delay for notification-originated intents, executing immediately on resume to optimize routing.
+`FrameReady` does **not** wait 500 ms on every cold start. Default `trampolineThresholdMs` is **0**: the first resumed activity that is not in `trampolineActivities` and not finishing triggers immediately (then Choreographer / frame-commit).
+
+List splash/router activities:
+
+```kotlin
+FrameReady.trampolineActivities.add(SplashActivity::class.java)
+```
+
+Set `FrameReady.trampolineThresholdMs = 500L` only if you need to detect unknown short-lived activities without listing them.
+
+Notification-originated intents (API 31+) still skip that delay and trigger on resume.
 
 ### 🔔 Notification & Deep Link Integration Guidelines
 
@@ -650,8 +605,8 @@ FrameReady includes enterprise-grade guardrails to ensure robust delivery under 
 ### 1. Cumulative & Incremental Registration
 `FrameReady.install()` is thread-safe and supports multi-pass installation. If features in modular repositories register elements independently at separate times, they are merged cumulatively into the topological graph. Submissions are finalized only once the first frame has successfully drawn to the screen.
 
-### 2. Double-Buffered Frame Rasterization
-Instead of triggering immediately when a callback is queued, FrameReady uses a **double-buffered postFrameCallback loop**. This guarantees that the first layout pass is fully rasterized and visual pixels on the screen are completely rendered before initializers are granted compute resources.
+### 2. Android frame trigger
+The Class-based `install` (manifest provider) triggers on the first non-trampoline resume, then one `Choreographer` callback, then on API 29+ `registerFrameCommitCallback`. Unknown-splash scanning is opt-in: `trampolineThresholdMs = 500`. Compose apps should call `signalCompositionReady()` from a root `LaunchedEffect`.
 
 ### 3. Strict Main-Thread Deadlock Prevention
 If `.get(Initializer)` is called on the Main Thread before that initializer completes, the library throws an explicit `IllegalStateException` with a descriptive message rather than silently pausing/deadlocking the main thread, allowing developers to spot violations immediately.
@@ -659,32 +614,29 @@ If `.get(Initializer)` is called on the Main Thread before that initializer comp
 ### 4. Custom Trampolines & Flexible Thresholds
 Easily register customized splash-screens, transient webviews, or specific deep-link routers that should immediately skip triggering first frame:
 ```kotlin
-// Extend or restrict the trampoline scan delay
-FrameReady.trampolineThresholdMs = 300L
+// Optional: detect unknown splash activities (off by default)
+FrameReady.trampolineThresholdMs = 500L
 
-// Register custom activities that are known trampolines
+// Register known trampolines (preferred)
 FrameReady.trampolineActivities.add(MyCustomSplashActivity::class.java)
 ```
 
 ### 5. Localized Exception Isolation
 If any initializer fails (including runtime crashes or timeouts), the error is isolated locally and the respective deferred outputs are completed exceptionally. Unrelated peer initializers continue running unaffected, while the library resets its consecutive stability counters to protect performance tracking integrity.
 
-### 6. Blocking Thread Interruption & Timeouts
-For legacy SDKs or tasks containing non-suspendable blocking work (e.g. `Thread.sleep` or synchronous socket/disk reads), FrameReady executes them wrapped in `kotlinx.coroutines.runInterruptible`.
+### 6. Blocking timeouts (Android only)
+On Android, `BACKGROUND` `create()` runs under `runInterruptible`, so `Thread.sleep` can be interrupted when `timeoutMs()` fires. On iOS, cancellation is cooperative only. Blocking native work will not stop when the timeout fires.
 
-You can set custom safety timeout limits per initializer:
 ```kotlin
 class MyLegacySdkInitializer : FrameReadyInitializer<String> {
     override fun timeoutMs(): Long = 3000L // 3-second timeout
 
-    override suspend fun create(context: Context): String {
-        // Even though this blocks, it will be interrupted at 3000ms!
-        Thread.sleep(5000) 
+    override suspend fun create(context: PlatformContext): String {
+        Thread.sleep(5000)
         return "Loaded"
     }
 }
 ```
-If a timeout is hit, FrameReady triggers `Thread.interrupt()` executing the blocked block, raises an `InterruptedException` to release the thread instantly, and completes exceptionally with `InitializerTimeoutException`.
 
 ---
 

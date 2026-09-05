@@ -36,10 +36,6 @@ class MainViewModel : ViewModel() {
     val uiState: StateFlow<UiState> = _uiState.asStateFlow()
 
     init {
-        // 1. EARLY AWAIT DEMO (Rule 2) - Called before init has run
-        testEarlyAwait()
-
-        // 2. Metrics Hook Setup
         viewModelScope.launch {
             FrameReady.metricsFlow.collect { metrics ->
                 _uiState.update { it.copy(startupMetrics = metrics, metricsCallbackFired = true) }
@@ -47,7 +43,7 @@ class MainViewModel : ViewModel() {
         }
     }
 
-    private fun testEarlyAwait() {
+    fun testEarlyAwait() {
         viewModelScope.launch {
             _uiState.update { it.copy(earlyAwaitStatus = "Waiting for A (Suspended)...") }
             val startTime = TimeSource.Monotonic.markNow()

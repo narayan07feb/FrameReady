@@ -5,11 +5,13 @@ import android.content.Context
 import android.util.Log
 import com.frameready.FrameReady
 import com.frameready.FrameReadyStorage
+import com.frameready.trampolineActivities
 
 class SampleApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         Log.d("SampleApplication", "Application onCreate: Initializing FrameReady BYOS")
+        FrameReady.trampolineActivities.add(SplashActivity::class.java)
 
         // Simulate 800ms of blocking SDK initialization (Analytics, Crash reporting, etc.)
         // that a real production app performs in Application.onCreate().

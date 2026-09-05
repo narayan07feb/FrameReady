@@ -36,7 +36,7 @@ import kotlin.reflect.KClass
  *
  * For Compose on Android — including the single-Activity, multiple-composable CMP pattern —
  * prefer `FrameReady.install(context, listOf(SomeInit::class))` (the KMP-style member, from
- * `commonMain`) together with `FrameReady.signalCompositionReady(context)` from your root
+ * `commonMain`) together with `FrameReady.signalCompositionReady()` from your root
  * composable's `LaunchedEffect(Unit)` — the exact same pattern used on iOS.
  */
 
@@ -59,9 +59,9 @@ private class ActivityEntry(
     var isDestroyed: Boolean = false
 )
 
-private var _trampolineThresholdMs: Long = 500L
+private var _trampolineThresholdMs: Long = 0L
 
-/** Delay before an Activity that stops without surviving is considered a trampoline. */
+/** Delay before an Activity that stops without surviving is considered a trampoline. Default 0 (no scan). Set e.g. 500 to detect unknown splash activities. */
 var FrameReady.trampolineThresholdMs: Long
     get() = _trampolineThresholdMs
     set(value) { _trampolineThresholdMs = value }
@@ -87,11 +87,12 @@ var FrameReady.notificationOriginChecker: ((Intent) -> Boolean)?
  * detection for classic View-based apps (including [FrameReadyProvider] manifest auto-discovery).
  *
  * For Compose apps, prefer `FrameReady.install(context, List<KClass<...>>)` together with
- * `FrameReady.signalCompositionReady(context)`.
+ * `FrameReady.signalCompositionReady()`.
  */
 @Suppress("UNCHECKED_CAST")
 fun FrameReady.install(context: Context, initClasses: List<Class<Any>>) {
     FrameReady.platformResetHook = { resetAndroidBridgeForTesting() }
+    FrameReady.platformPrepareHook = { resolveManifestClasses() }
 
     val kClasses = initClasses.map { it.kotlin as KClass<out FrameReadyInitializer<*>> }
     FrameReady.install(context, kClasses)
@@ -108,6 +109,31 @@ fun FrameReady.install(context: Context, initClasses: List<Class<Any>>) {
 internal fun FrameReady.registeredLifecycleCallbacksForTesting(): Application.ActivityLifecycleCallbacks? =
     registeredLifecycleCallbacks
 
+private val pendingManifestNames = mutableListOf<String>()
+
+internal fun FrameReady.enqueueManifestInitializerNames(names: Collection<String>) {
+    pendingManifestNames.addAll(names)
+}
+
+private fun resolveManifestClasses() {
+    if (pendingManifestNames.isEmpty()) return
+    val names = pendingManifestNames.toList()
+    pendingManifestNames.clear()
+    for (name in names) {
+        try {
+            val clazz = Class.forName(name)
+            if (FrameReadyInitializer::class.java.isAssignableFrom(clazz)) {
+                @Suppress("UNCHECKED_CAST")
+                FrameReady.initializers.add(clazz.kotlin as KClass<Any>)
+            } else {
+                Log.e(FrameReady.TAG, "Class $name is not a FrameReadyInitializer.")
+            }
+        } catch (e: ClassNotFoundException) {
+            Log.e(FrameReady.TAG, "Failed to find initializer class: $name", e)
+        }
+    }
+}
+
 private fun resetAndroidBridgeForTesting() {
     activityMap.clear()
     activeActivitiesCount.set(0)
@@ -115,6 +141,9 @@ private fun resetAndroidBridgeForTesting() {
     firstActivityStartedInProcess.set(false)
     lifecycleAttached.set(false)
     registeredLifecycleCallbacks = null
+    pendingManifestNames.clear()
+    _trampolineThresholdMs = 0L
+    _trampolineActivities.clear()
 }
 
 // ─── Activity lifecycle wiring ─────────────────────────────────────────────────
@@ -152,19 +181,26 @@ private fun registerLifecycleCallbacks(app: Application) {
                     trampolineSkipCount.incrementAndGet()
                 }
                 else -> {
-                    val weakActivity = WeakReference(activity)
-                    Handler(Looper.getMainLooper()).postDelayed({
-                        val act = weakActivity.get() ?: return@postDelayed
-                        val currentEntry = activityMap[act] ?: return@postDelayed
-                        if (!act.isFinishing && !act.isDestroyed && currentEntry.stoppedAt == 0L) {
-                            triggerFirstDraw(act)
-                        } else {
-                            if (Log.isLoggable(FrameReady.TAG, Log.DEBUG)) {
-                                Log.d(FrameReady.TAG, "Trampoline detected: ${act.localClassName}, skipping.")
-                            }
-                            trampolineSkipCount.incrementAndGet()
+                    val delayMs = FrameReady.trampolineThresholdMs
+                    if (delayMs <= 0L) {
+                        if (!activity.isFinishing && !activity.isDestroyed) {
+                            triggerFirstDraw(activity)
                         }
-                    }, FrameReady.trampolineThresholdMs)
+                    } else {
+                        val weakActivity = WeakReference(activity)
+                        Handler(Looper.getMainLooper()).postDelayed({
+                            val act = weakActivity.get() ?: return@postDelayed
+                            val currentEntry = activityMap[act] ?: return@postDelayed
+                            if (!act.isFinishing && !act.isDestroyed && currentEntry.stoppedAt == 0L) {
+                                triggerFirstDraw(act)
+                            } else {
+                                if (Log.isLoggable(FrameReady.TAG, Log.DEBUG)) {
+                                    Log.d(FrameReady.TAG, "Trampoline detected: ${act.localClassName}, skipping.")
+                                }
+                                trampolineSkipCount.incrementAndGet()
+                            }
+                        }, delayMs)
+                    }
                 }
             }
         }

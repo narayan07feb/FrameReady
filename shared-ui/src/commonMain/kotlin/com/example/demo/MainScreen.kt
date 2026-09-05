@@ -11,6 +11,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -31,6 +32,7 @@ import androidx.compose.ui.unit.sp
 import com.example.ui.theme.LocalReducedMotion
 import com.example.ui.theme.extraColors
 import com.example.ui.theme.extraTypography
+import com.frameready.FrameReady
 
 /**
  * The FrameReady demo's main showcase screen. Shared verbatim between Android and iOS via
@@ -40,6 +42,9 @@ import com.example.ui.theme.extraTypography
 fun MainScreen(viewModel: MainViewModel, modifier: Modifier = Modifier) {
     val state by viewModel.uiState.collectAsState()
     val scrollState = rememberScrollState()
+
+    // ponytail: uses context saved at install; first composition, not a vsync fence
+    LaunchedEffect(Unit) { FrameReady.signalCompositionReady() }
 
     // Cap body content width on large/tablet screens and center it — full width is
     // for navigation chrome, not paragraphs (M3 layout guidance).
@@ -65,6 +70,7 @@ fun MainScreen(viewModel: MainViewModel, modifier: Modifier = Modifier) {
 
             AwaitDemonstrationSection(
                 state = state,
+                onEarlyAwaitClick = { viewModel.testEarlyAwait() },
                 onLateAwaitClick = { viewModel.testLateAwait() }
             )
 
@@ -448,7 +454,11 @@ fun NodeBox(
 }
 
 @Composable
-fun AwaitDemonstrationSection(state: UiState, onLateAwaitClick: () -> Unit) {
+fun AwaitDemonstrationSection(
+    state: UiState,
+    onEarlyAwaitClick: () -> Unit,
+    onLateAwaitClick: () -> Unit
+) {
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
         shape = MaterialTheme.shapes.large,
@@ -469,7 +479,7 @@ fun AwaitDemonstrationSection(state: UiState, onLateAwaitClick: () -> Unit) {
             // Early Awaiter Status Box
             Column {
                 Text(
-                    text = "1. Early Awaiter (Triggered from viewModelScope init):",
+                    text = "1. Early await (tap after the first frame):",
                     color = MaterialTheme.colorScheme.onSurface,
                     style = MaterialTheme.typography.bodySmall,
                     fontWeight = FontWeight.SemiBold
@@ -486,7 +496,11 @@ fun AwaitDemonstrationSection(state: UiState, onLateAwaitClick: () -> Unit) {
                     Column {
                         Text(
                             text = state.earlyAwaitStatus,
-                            color = if (state.earlyAwaitStatus.contains("Resumed")) MaterialTheme.extraColors.success else MaterialTheme.colorScheme.error,
+                            color = when {
+                                state.earlyAwaitStatus.contains("Resumed") -> MaterialTheme.extraColors.success
+                                state.earlyAwaitStatus.startsWith("Failed") -> MaterialTheme.colorScheme.error
+                                else -> MaterialTheme.colorScheme.onSurface
+                            },
                             style = MaterialTheme.typography.bodySmall,
                             fontWeight = FontWeight.Bold,
                             modifier = Modifier.testTag("early_status_text")
@@ -500,6 +514,19 @@ fun AwaitDemonstrationSection(state: UiState, onLateAwaitClick: () -> Unit) {
                             )
                         }
                     }
+                }
+                Spacer(modifier = Modifier.height(6.dp))
+                Button(
+                    onClick = onEarlyAwaitClick,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 48.dp)
+                        .testTag("early_await_button"),
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+                ) {
+                    Icon(imageVector = Icons.Default.PlayArrow, contentDescription = null)
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(text = "Await A")
                 }
             }
 

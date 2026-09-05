@@ -18,7 +18,7 @@ public-facing pitch, API, and benchmark numbers — that file is what library co
 | `frameready/` | The core library. **Kotlin Multiplatform** (Android + iOS) as of branch `feat/kmp-ios-support`. |
 | `shared-ui/` | The main showcase/demo screen's UI, **shared verbatim between Android and iOS via Compose Multiplatform** — `MainScreen.kt`, `MainViewModel.kt`, `SampleInitializers.kt` (A/B/C demo initializers), and the `ui/theme/*` package all live here in commonMain. This is the single source of truth for that screen — never fork it per-platform. |
 | `app/` | Thin Android host for `:shared-ui`'s `MainScreen` — `MainActivity.kt` is ~30 lines, just `ComponentActivity` + `setContent { MainScreen(viewModel) }`. Also owns Android-only illustrative-only files not wired into the UI (`BenchmarkSamples.kt`, `DependencyInjectionIntegration.kt`, `HeavyInitializer.kt`) and `SplashActivity.kt` (the trampoline demo). |
-| `sample-ios/` | Thin iOS host for `:shared-ui`'s `MainScreen` — `MainViewController.kt` wraps it in `ComposeUIViewController`, registers factories + installs + signals composition-ready (iOS has no manifest auto-discovery, unlike Android's `FrameReadyProvider`). No Xcode project checked in — see "Verifying on the iOS Simulator" below. |
+| `sample-ios/` | Thin iOS host for `:shared-ui`'s `MainScreen` — `MainViewController.kt` wraps it in `ComposeUIViewController` and registers factories + `install` (iOS has no manifest auto-discovery). First-frame is `LaunchedEffect` inside shared `MainScreen` (`FrameReady.signalCompositionReady()`), not the iOS host. No Xcode project checked in — see "Verifying on the iOS Simulator" below. |
 | `sample-standard/`, `sample-hilt/`, `sample-appstartup/`, `sample-trampoline/`, `sample-notification/` | Focused single-scenario demo apps referenced in the README's scenario table. Independent of `:shared-ui` — not touched by the M3 theme or Compose Multiplatform work. |
 | `sample-baseline/`, `sample-metrics-only/`, `sample-appcls-init/` | Benchmark-only comparison apps (no FrameReady, or FrameReady with 0 initializers) — used by `benchmark/`. |
 | `benchmark/` | Macrobenchmark suite (`androidx.benchmark.macro`) — see README's "Verified Macrobenchmark Results". |
@@ -37,7 +37,9 @@ and iOS. Source sets:
 - **`src/androidMain/`** — `FrameReadyAndroidBridge.kt` holds the one legacy-shaped entry point,
   `FrameReady.install(context: Context, initClasses: List<Class<Any>>)` (kept because its param
   type doesn't collide with the KClass members), plus everything genuinely Android-only:
-  trampoline threshold/activities, notification-origin heuristics, lifecycle-callback wiring.
+  trampoline threshold/activities (default threshold 0; list splash activities), notification-origin
+  heuristics, lifecycle-callback wiring. `FrameReadyProvider` records `Process.getStartUptimeMillis()`
+  into `processStartMs`, stores manifest class **names**, and `Class.forName`s them at first frame.
 - **`src/iosMain/`** — iOS actuals:
   - `PlatformContext`: `expect abstract class` (not `expect class`) because Android's `actual
     typealias PlatformContext = android.content.Context` requires exact modality match with
@@ -71,6 +73,10 @@ The main showcase screen is **one Compose Multiplatform UI shared verbatim** bet
 iOS — not two hand-kept-in-sync implementations. `app/MainActivity.kt` and
 `sample-ios/MainViewController.kt` are both thin hosts that construct a `MainViewModel` and render
 `MainScreen(viewModel)`; all actual screen code lives in `shared-ui/src/commonMain`.
+`MainScreen` calls `FrameReady.signalCompositionReady()` from `LaunchedEffect(Unit)` so Compose
+Android and iOS share the same post-composition trigger. Android's `FrameReadyProvider` may also
+fire via Activity resume (`trampolineThresholdMs` default 0); `markFirstFrame` is once-per-process
+so the first signal wins. Showcase `await` of sample initializer A is a button, not `ViewModel` init.
 
 - Went through a Material 3 UX pass (M3 audit: color tokens, typography, shape, elevation, layout,
   motion, accessibility, theming consistency). **Scope note:** only `shared-ui`'s screen — the
